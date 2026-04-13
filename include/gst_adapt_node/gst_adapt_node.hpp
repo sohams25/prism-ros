@@ -5,6 +5,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/app/gstappsink.h>
 
 #include "gst_adapt_node/hardware_detector.hpp"
 
@@ -22,8 +23,10 @@ private:
   std::string pipeline_string_;
   GstElement * pipeline_ = nullptr;
   GstElement * appsrc_ = nullptr;
+  GstElement * appsink_ = nullptr;
   rclcpp::TimerBase::SharedPtr bus_timer_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr output_pub_;
 
   void declare_parameters();
   void detect_hardware();
@@ -34,6 +37,7 @@ private:
 
   void on_image(sensor_msgs::msg::Image::UniquePtr msg);
   static void destroy_ros_image(gpointer user_data);
+  static GstFlowReturn on_new_sample(GstAppSink * sink, gpointer user_data);
 };
 
 }  // namespace gst_adapt_node

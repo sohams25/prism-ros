@@ -22,10 +22,8 @@ private:
 
   cv::VideoCapture cap_;
   cv::Mat frame_;
-  cv::Mat frame_yuv_;
   sensor_msgs::msg::CameraInfo info_msg_;
   std::string video_path_;
-  std::string format_;
   double fps_;
   bool loop_;
   uint64_t frame_id_ = 0;

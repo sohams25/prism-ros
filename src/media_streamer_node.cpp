@@ -15,13 +15,11 @@ MediaStreamerNode::MediaStreamerNode(const rclcpp::NodeOptions & options)
 {
   declare_parameter("video_path", "/tmp/test_video.mp4");
   declare_parameter("loop", true);
-  declare_parameter("format", "bgr8");
   declare_parameter("image_topic", "/camera/image_raw");
   declare_parameter("info_topic", "/camera/camera_info");
 
   video_path_ = get_parameter("video_path").as_string();
   loop_ = get_parameter("loop").as_bool();
-  format_ = get_parameter("format").as_string();
 
   cap_.open(video_path_);
   if (!cap_.isOpened()) {
@@ -44,8 +42,8 @@ MediaStreamerNode::MediaStreamerNode(const rclcpp::NodeOptions & options)
   auto period = std::chrono::duration<double>(1.0 / fps_);
   timer_ = create_wall_timer(period, std::bind(&MediaStreamerNode::on_timer, this));
 
-  RCLCPP_INFO(get_logger(), "Streaming %dx%d @ %.1f Hz [%s] from %s (C++ zero-copy)",
-    w, h, fps_, format_.c_str(), video_path_.c_str());
+  RCLCPP_INFO(get_logger(), "Streaming %dx%d @ %.1f Hz [bgr8] from %s (C++ zero-copy)",
+    w, h, fps_, video_path_.c_str());
 }
 
 void MediaStreamerNode::init_camera_info(int width, int height)
@@ -81,23 +79,8 @@ void MediaStreamerNode::on_timer()
   }
 
   auto msg = std::make_unique<sensor_msgs::msg::Image>();
-
-  if (format_ == "yuv420p") {
-    cv::cvtColor(frame_, frame_yuv_, cv::COLOR_BGR2YUV_I420);
-    int w = frame_.cols;
-    int h = frame_.rows;
-    size_t yuv_size = static_cast<size_t>(w) * h * 3 / 2;
-
-    msg->height = h;
-    msg->width = w;
-    msg->encoding = "yuv420p";
-    msg->step = w;
-    msg->is_bigendian = false;
-    msg->data.assign(frame_yuv_.data, frame_yuv_.data + yuv_size);
-  } else {
-    cv_bridge::CvImage cv_img(std_msgs::msg::Header(), "bgr8", frame_);
-    cv_img.toImageMsg(*msg);
-  }
+  cv_bridge::CvImage cv_img(std_msgs::msg::Header(), "bgr8", frame_);
+  cv_img.toImageMsg(*msg);
 
   auto stamp = now();
   msg->header.stamp = stamp;

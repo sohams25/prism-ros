@@ -98,7 +98,6 @@ def generate_launch_description():
                 name='accel_source',
                 parameters=[{
                     'video_path': video_path,
-                    'format': 'yuv420p',
                     'image_topic': '/accelerated/image_raw',
                     'info_topic': '/accelerated/camera_info',
                 }],

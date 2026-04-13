@@ -22,7 +22,7 @@ PlatformInfo validate_platform(
       required_element = "vaapipostproc";
       break;
     case HardwarePlatform::NVIDIA_JETSON:
-      required_element = "nvvidconv";
+      required_element = "nvvideoconvert";
       break;
     default:
       return detected;
@@ -55,16 +55,15 @@ PipelineFactory::PipelineFactory(
 }
 
 // ---------------------------------------------------------------------------
-// Source — custom appsrc fed by GstAdaptNode's zero-copy subscriber.
-// Caps declare I420 at source resolution so hardware elements negotiate
-// without any CPU-side videoconvert.
+// Source — appsrc accepting native BGR from ROS Image messages.
+// No format conversion upstream — hardware bridges handle it.
 // ---------------------------------------------------------------------------
 
 std::string PipelineFactory::source_element() const
 {
   std::ostringstream ss;
-  ss << "appsrc name=ros_source is-live=true block=false format=3"
-     << " ! video/x-raw,format=I420"
+  ss << "appsrc name=ros_ingest is-live=true block=false format=3"
+     << " ! video/x-raw,format=BGR"
      << ",width=" << config_.source_width
      << ",height=" << config_.source_height
      << ",framerate=30/1"
@@ -74,11 +73,11 @@ std::string PipelineFactory::source_element() const
 
 std::string PipelineFactory::sink_element() const
 {
-  return "rosimagesink ros-topic=" + config_.output_topic + " sync=false max-buffers=1 drop=true";
+  return "appsink name=ros_emit sync=false max-buffers=1 drop=true";
 }
 
 // ---------------------------------------------------------------------------
-// Caps helper — builds a video/x-raw caps string with optional memory type
+// Caps helper
 // ---------------------------------------------------------------------------
 
 std::string PipelineFactory::caps(const std::string & memory_type) const
@@ -94,27 +93,39 @@ std::string PipelineFactory::caps(const std::string & memory_type) const
 }
 
 // ---------------------------------------------------------------------------
-// Platform-specific resize chains
-// Input is I420 from appsrc — no videoconvert needed before hardware elements.
+// Platform-specific resize chains — input is BGR from appsrc.
 // ---------------------------------------------------------------------------
 
-// Jetson: I420 is nvvidconv's native input. Upload + resize on GPU,
-// download, then videoconvert to BGR for rosimagesink.
-std::string PipelineFactory::resize_jetson() const
-{
-  return "nvvidconv ! " + caps("NVMM") +
-         " ! nvvidconv ! videoconvert ! video/x-raw,format=BGR";
-}
-
-// Intel VA-API: I420 is vaapipostproc's native input. Upload + resize on GPU,
-// download at target res, then videoconvert to BGR for rosimagesink.
+// Intel VA-API: videoconvert pins BGR→NV12 (planar, 12bpp — minimal CPU work),
+// vaapipostproc uploads + resizes on GPU, second vaapipostproc downloads,
+// videoconvert pins back to BGR for appsink.
+// NOTE: On GStreamer 1.22+ with vapostproc, the GL bridge
+// (glupload→glcolorconvert→vapostproc) would eliminate the CPU videoconvert.
 std::string PipelineFactory::resize_vaapi() const
 {
-  return "vaapipostproc ! " + caps("VASurface") +
-         " ! vaapipostproc ! videoconvert ! video/x-raw,format=BGR";
+  return "videoconvert ! video/x-raw,format=NV12"
+         " ! vaapipostproc"
+         " ! " + caps("VASurface") + ",format=NV12"
+         " ! vaapipostproc"
+         " ! videoconvert ! video/x-raw,format=BGR";
 }
 
-// CPU: software path — videoscale for resampling, videoconvert for format fixup.
+// NVIDIA Jetson: CUDA cores ingest BGR directly via compute-hw=1 override,
+// bypassing the VIC engine. First convert uploads to NVMM + converts to NV12.
+// Second convert resizes + downloads to system BGR.
+std::string PipelineFactory::resize_jetson() const
+{
+  std::ostringstream ss;
+  ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
+     << " ! video/x-raw(memory:NVMM),format=NV12"
+     << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
+     << " ! video/x-raw,format=BGR"
+     << ",width=" << config_.target_width
+     << ",height=" << config_.target_height;
+  return ss.str();
+}
+
+// CPU: software path.
 std::string PipelineFactory::resize_cpu() const
 {
   return "videoscale ! videoconvert ! " + caps();
@@ -131,7 +142,7 @@ std::string PipelineFactory::resize_chain() const
 }
 
 // ---------------------------------------------------------------------------
-// Public API — assembles the full pipeline string
+// Public API
 // ---------------------------------------------------------------------------
 
 std::string PipelineFactory::build() const
