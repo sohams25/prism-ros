@@ -1,17 +1,6 @@
-<p align="center">
-  <h1 align="center">GstAdaptNode</h1>
-  <p align="center">
-    <a href="https://sohams25.github.io/GstAdaptNode/">🌐 View the Project Website & Interactive Benchmarks</a>
-  </p>
-  <p align="center">
-    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-    <img src="https://img.shields.io/badge/ROS_2-Humble-green.svg" alt="ROS 2 Humble">
-    <img src="https://img.shields.io/badge/GStreamer-1.x-orange.svg" alt="GStreamer">
-    <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg" alt="C++17">
-    <img src="https://img.shields.io/badge/zero--copy-intra--process-cyan.svg" alt="Zero-Copy">
-    <img src="https://img.shields.io/badge/input-bgr8_native-brightgreen.svg" alt="BGR8 Native">
-  </p>
-</p>
+# GstAdaptNode
+
+> **[View the Project Website & Interactive Benchmarks](https://sohams25.github.io/GstAdaptNode/)**
 
 Hardware-agnostic ROS 2 perception acceleration. Auto-detects host accelerators (Intel VA-API / NVIDIA NVMM) at runtime to dynamically construct zero-copy GStreamer pipelines directly from standard ROS parameters.
 
