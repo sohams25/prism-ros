@@ -20,20 +20,35 @@ ComposableNode(
 
 ---
 
-## Current Benchmark (Intel desktop, GStreamer 1.20, direct-mode fallback)
+## Current Benchmark
 
-4K (3840×2160) BGR8 source → 640×480 at 10 Hz, sustained over 30+ seconds.
+Measured over a **~170-second sustained A/B run** on an Intel desktop, GStreamer 1.20, direct-mode fallback. 4K (3840×2160) BGR8 source → 640×480 at 10 Hz. 2108 legacy + 2109 accel per-frame latency records; 170 samples of CPU / RSS at 1 Hz. First 10 s dropped as warmup.
 
-| Metric | `image_proc::ResizeNode` | `gst_adapt_node::ResizeNode` |
-|---|---|---|
-| Per-frame latency | **11 – 21 ms** | **4 – 15 ms** |
-| Delta (accel advantage) | — | **6 – 17 ms faster per frame** |
-| Frame rate | 10 fps steady | 10 fps steady |
-| Container CPU | 60 – 72 % | 55 – 70 % |
-| Container RAM (RSS) | ~ 805 MB | ~ 755 MB |
-| Transport | `image_transport` + `CameraSubscriber` | Zero-copy intra-process `unique_ptr` move |
+| Metric | `image_proc::ResizeNode` | `gst_adapt_node::ResizeNode` | Delta |
+|---|---|---|---|
+| **Latency — median** | 12.25 ms | **4.80 ms** | **7.45 ms faster** (60.8 %) |
+| **Latency — mean** | 14.28 ms | **7.68 ms** | **6.60 ms faster** (46.2 %) |
+| **Latency — p95** | 21.84 ms | **14.46 ms** | **7.38 ms** |
+| **Latency — p99** | 29.76 ms | **24.38 ms** | **5.38 ms** |
+| **Latency — stdev** | 4.96 ms | 5.27 ms | — |
+| **Frame rate** | 9.99 fps (σ 0.08) | 10.00 fps (σ 0.19) | steady |
+| **Container CPU — mean** | 64.99 % | **55.54 %** | **9.4 pp** |
+| **Container CPU — p95** | 74.65 % | **64.00 %** | **10.65 pp** |
+| **Container RSS — mean** | 810.52 MB | **747.56 MB** | **62.96 MB** |
 
-On this machine the GPU path is disabled because GStreamer 1.20's `vaapipostproc` has a chroma-loss bug (Y plane only). The node detects that and falls back to direct mode — **which is still the faster path** because it eliminates `image_transport` / DDS round-tripping entirely. On hosts with a working GPU (NVIDIA Jetson with `nvvideoconvert`, or Intel with GStreamer 1.22+ `vapostproc`), the accelerated path offloads the resize to hardware and frees CPU for SLAM/perception/planning.
+<p align="center">
+  <img src="docs/assets/latency_distribution.svg" alt="Latency distribution: min, p5, median, p95, max" width="720"/>
+</p>
+
+<p align="center">
+  <img src="docs/assets/latency_timeseries.svg" alt="Per-frame latency time series, 170s run" width="720"/>
+</p>
+
+<p align="center">
+  <img src="docs/assets/resource_usage.svg" alt="Resource comparison: latency / CPU / RSS" width="720"/>
+</p>
+
+On this host the GPU path is skipped because GStreamer 1.20's `vaapipostproc` has a chroma-loss bug (Y plane only). The node detects it, falls back to direct mode, and **still wins by 7.4 ms at the median** because it eliminates the `image_transport` + `CameraSubscriber` DDS round-trip entirely. On hosts with a working GPU (NVIDIA Jetson `nvvideoconvert`, or Intel on GStreamer 1.22+ with `vapostproc`), the accelerated path additionally offloads the resize kernel to dedicated silicon and frees CPU for SLAM / perception / planning.
 
 ## Architecture
 

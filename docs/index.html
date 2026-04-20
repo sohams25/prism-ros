@@ -178,99 +178,97 @@
   <!-- Benchmarks -->
   <section id="benchmarks" class="max-w-6xl mx-auto px-6 py-24">
     <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Benchmark Results</h2>
-    <p class="text-slate-400 text-center mb-10 max-w-2xl mx-auto">
+    <p class="text-slate-400 text-center mb-3 max-w-2xl mx-auto">
       <code>image_proc::ResizeNode</code> vs <code>gst_adapt_node::ResizeNode</code>.
-      4K BGR8 source &rarr; 640&times;480 at 10 Hz, measured over a sustained 30-second A/B run.
+      4K BGR8 &rarr; 640&times;480 at 10 Hz, sustained over <span class="text-cyan-300">~170 seconds</span>.
+    </p>
+    <p class="text-center text-slate-500 text-sm mb-3 max-w-2xl mx-auto">
+      <span class="tnum text-cyan-300">2,108</span> legacy + <span class="tnum text-cyan-300">2,109</span> accel per-frame latency records · <span class="tnum text-cyan-300">170</span> CPU/RSS samples at 1 Hz · first 10 s dropped as warmup.
     </p>
     <p class="text-center text-slate-600 text-xs mb-14 max-w-xl mx-auto uppercase tracking-widest">
-      Intel desktop · GStreamer 1.20 · direct-mode fallback (vaapipostproc chroma bug)
+      Intel desktop · GStreamer 1.20 · direct-mode fallback
     </p>
 
     <!-- Headline Stats -->
     <div class="grid md:grid-cols-4 gap-5 mb-14">
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">6&ndash;17<span class="text-xl ml-1">ms</span></div>
-        <div class="text-slate-500 text-sm mt-2">Faster per frame</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">7.45<span class="text-xl ml-1">ms</span></div>
+        <div class="text-slate-500 text-sm mt-2">Median faster</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">4&ndash;15<span class="text-xl ml-1">ms</span></div>
-        <div class="text-slate-500 text-sm mt-2">Accel latency</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">60.8<span class="text-xl ml-1">%</span></div>
+        <div class="text-slate-500 text-sm mt-2">Median latency reduction</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">0</div>
-        <div class="text-slate-500 text-sm mt-2">Memcpy on hot path</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">-9.4<span class="text-xl ml-1">pp</span></div>
+        <div class="text-slate-500 text-sm mt-2">Mean CPU reduction</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">bgr8</div>
-        <div class="text-slate-500 text-sm mt-2">Native input</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">-63<span class="text-xl ml-1">MB</span></div>
+        <div class="text-slate-500 text-sm mt-2">Mean RSS reduction</div>
       </div>
     </div>
 
-    <!-- Horizontal bar chart — latency -->
-    <div class="grid md:grid-cols-2 gap-7">
-      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5">
-        <div class="flex items-baseline justify-between mb-6">
-          <h3 class="text-lg font-bold">Per-frame latency</h3>
-          <span class="text-slate-600 text-xs uppercase tracking-widest">ms · lower is better</span>
-        </div>
-        <div class="space-y-5">
-          <div>
-            <div class="flex items-baseline justify-between mb-1.5">
-              <span class="text-xs text-slate-500 uppercase tracking-widest font-bold">image_proc</span>
-              <span class="tnum text-red-400 font-bold">11&ndash;21<span class="text-slate-600 text-xs ml-1">ms</span></span>
-            </div>
-            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
-              <div class="bar-fill h-full bg-gradient-to-r from-red-500/70 to-orange-500/70" style="width: 85%"></div>
-            </div>
-          </div>
-          <div>
-            <div class="flex items-baseline justify-between mb-1.5">
-              <span class="text-xs text-cyan-400 uppercase tracking-widest font-bold">gst_adapt_node</span>
-              <span class="tnum text-cyan-400 font-bold">4&ndash;15<span class="text-slate-600 text-xs ml-1">ms</span></span>
-            </div>
-            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
-              <div class="bar-fill h-full bg-gradient-to-r from-cyan-500 to-emerald-400" style="width: 48%"></div>
-            </div>
-          </div>
-        </div>
-        <p class="text-slate-600 text-xs mt-6 leading-relaxed">
-          The accelerated path wins by eliminating the <code class="text-slate-500">image_transport</code> &#43; <code class="text-slate-500">CameraSubscriber</code> round-trip. Intra-process <code class="text-slate-500">unique_ptr</code> move + direct callback = no serialization, no DDS.
-        </p>
+    <!-- Measured Numbers Table + Chart -->
+    <div class="grid md:grid-cols-5 gap-7 mb-10">
+      <div class="md:col-span-2 bg-[#111827] rounded-2xl p-6 border border-white/5">
+        <h3 class="text-lg font-bold mb-4">Latency (ms)</h3>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-slate-500 text-xs uppercase tracking-widest">
+              <th class="text-left pb-2 font-semibold">Stat</th>
+              <th class="text-right pb-2 font-semibold text-red-400/80">image_proc</th>
+              <th class="text-right pb-2 font-semibold text-cyan-400">gst_adapt_node</th>
+            </tr>
+          </thead>
+          <tbody class="tnum text-slate-300">
+            <tr class="border-t border-white/5"><td class="py-2">median</td><td class="text-right">12.25</td><td class="text-right text-cyan-300 font-semibold">4.80</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">mean</td><td class="text-right">14.28</td><td class="text-right text-cyan-300 font-semibold">7.68</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">p95</td><td class="text-right">21.84</td><td class="text-right text-cyan-300 font-semibold">14.46</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">p99</td><td class="text-right">29.76</td><td class="text-right text-cyan-300 font-semibold">24.38</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">stdev</td><td class="text-right">4.96</td><td class="text-right">5.27</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2 text-slate-500">samples</td><td class="text-right text-slate-500">2,108</td><td class="text-right text-slate-500">2,109</td></tr>
+          </tbody>
+        </table>
       </div>
+      <div class="md:col-span-3 bg-[#111827] rounded-2xl p-3 border border-white/5">
+        <img src="assets/latency_distribution.svg" alt="Latency distribution box plot" class="w-full rounded-lg"/>
+      </div>
+    </div>
 
-      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5">
-        <div class="flex items-baseline justify-between mb-6">
-          <h3 class="text-lg font-bold">Container CPU</h3>
-          <span class="text-slate-600 text-xs uppercase tracking-widest">% · lower is better</span>
-        </div>
-        <div class="space-y-5">
-          <div>
-            <div class="flex items-baseline justify-between mb-1.5">
-              <span class="text-xs text-slate-500 uppercase tracking-widest font-bold">image_proc</span>
-              <span class="tnum text-red-400 font-bold">60&ndash;72<span class="text-slate-600 text-xs ml-1">%</span></span>
-            </div>
-            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
-              <div class="bar-fill h-full bg-gradient-to-r from-red-500/70 to-orange-500/70" style="width: 72%"></div>
-            </div>
-          </div>
-          <div>
-            <div class="flex items-baseline justify-between mb-1.5">
-              <span class="text-xs text-cyan-400 uppercase tracking-widest font-bold">gst_adapt_node</span>
-              <span class="tnum text-cyan-400 font-bold">55&ndash;70<span class="text-slate-600 text-xs ml-1">%</span></span>
-            </div>
-            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
-              <div class="bar-fill h-full bg-gradient-to-r from-cyan-500 to-emerald-400" style="width: 65%"></div>
-            </div>
-          </div>
-        </div>
-        <p class="text-slate-600 text-xs mt-6 leading-relaxed">
-          On hosts with a working GPU path (Jetson <code class="text-slate-500">nvvideoconvert</code>, or Intel on GStreamer 1.22+ <code class="text-slate-500">vapostproc</code>), container CPU drops further because the resize kernel runs on dedicated silicon instead of the host.
-        </p>
+    <!-- Time series -->
+    <div class="bg-[#111827] rounded-2xl p-3 border border-white/5 mb-10">
+      <img src="assets/latency_timeseries.svg" alt="Per-frame latency time series" class="w-full rounded-lg"/>
+    </div>
+
+    <!-- CPU / RSS -->
+    <div class="grid md:grid-cols-5 gap-7">
+      <div class="md:col-span-3 bg-[#111827] rounded-2xl p-3 border border-white/5">
+        <img src="assets/resource_usage.svg" alt="Resource comparison bar chart" class="w-full rounded-lg"/>
+      </div>
+      <div class="md:col-span-2 bg-[#111827] rounded-2xl p-6 border border-white/5">
+        <h3 class="text-lg font-bold mb-4">CPU &amp; RSS</h3>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-slate-500 text-xs uppercase tracking-widest">
+              <th class="text-left pb-2 font-semibold">Stat</th>
+              <th class="text-right pb-2 font-semibold text-red-400/80">image_proc</th>
+              <th class="text-right pb-2 font-semibold text-cyan-400">gst_adapt_node</th>
+            </tr>
+          </thead>
+          <tbody class="tnum text-slate-300">
+            <tr class="border-t border-white/5"><td class="py-2">CPU mean %</td><td class="text-right">64.99</td><td class="text-right text-cyan-300 font-semibold">55.54</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">CPU p95 %</td><td class="text-right">74.65</td><td class="text-right text-cyan-300 font-semibold">64.00</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">RSS mean MB</td><td class="text-right">810.52</td><td class="text-right text-cyan-300 font-semibold">747.56</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2">FPS mean</td><td class="text-right">9.99</td><td class="text-right text-cyan-300 font-semibold">10.00</td></tr>
+            <tr class="border-t border-white/5"><td class="py-2 text-slate-500">samples</td><td class="text-right text-slate-500">170</td><td class="text-right text-slate-500">170</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
     <p class="text-slate-600 text-xs text-center mt-10 max-w-2xl mx-auto leading-relaxed">
-      Both pipelines run in separate <code class="text-slate-500">component_container</code> processes so CPU and RAM are measured independently. The dashboard revalidates each container PID every tick — dead zombies from prior runs are not measured as live pipelines.
+      Both pipelines run in separate <code class="text-slate-500">component_container</code> processes so CPU and RSS are measured independently. On this host the GPU path is skipped because GStreamer 1.20's <code class="text-slate-500">vaapipostproc</code> has a chroma-loss bug — direct mode still wins by eliminating the <code class="text-slate-500">image_transport</code> round-trip. On Jetson or GStreamer 1.22+ Intel, the accelerated path additionally offloads the resize kernel to dedicated silicon.
     </p>
   </section>
 
