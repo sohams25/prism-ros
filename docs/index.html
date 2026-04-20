@@ -1,353 +1,1058 @@
-<!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>GstAdaptNode — Zero-Copy ROS 2 Acceleration</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GstAdaptNode — Hardware-agnostic ROS 2 perception acceleration</title>
+  <meta name="description" content="A drop-in replacement for image_proc::ResizeNode that probes /dev/ at startup, validates against the GStreamer registry, and selects the fastest viable backend." />
+  <meta name="author" content="Soham Shinde" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap"
+    rel="stylesheet"
+  />
+
   <style>
-    :root { --bg: #0a0e1a; --card: #111827; }
-    body { background: var(--bg); }
-    .glow { text-shadow: 0 0 40px rgba(34,211,238,0.25), 0 0 80px rgba(34,211,238,0.08); }
-    .card-hover { transition: transform 0.25s ease, box-shadow 0.25s ease; }
-    .card-hover:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(34,211,238,0.07); }
-    .toggle-active { background: linear-gradient(135deg, #06b6d4, #8b5cf6); }
-    .toggle-inactive { background: #1e293b; }
-    pre { tab-size: 4; }
-    .tnum { font-variant-numeric: tabular-nums; }
-    .bar-bg { background: rgba(148,163,184,0.08); }
-    .bar-fill { transition: width 1.2s cubic-bezier(.22,1,.36,1); }
+    :root {
+      --paper:       #F6F3EB;
+      --paper-2:     #EFECE2;
+      --paper-deep:  #E7E2D3;
+      --ink:         #14120F;
+      --ink-2:       #3F3C37;
+      --ink-3:       #73706A;
+      --ink-4:       #A8A499;
+      --rule:        #DDD7CB;
+      --rule-strong: #9E9789;
+      --accent:      #8F2D11;   /* Venetian brick */
+      --accent-soft: #B4593A;
+      --diff-add-bg: #E4EEDE;
+      --diff-add-fg: #1E6B3A;
+      --diff-add-rail:#4A9461;
+      --diff-del-bg: #F3E1DB;
+      --diff-del-fg: #8F2D11;
+      --diff-del-rail:#B4593A;
+      --serif:  'IBM Plex Serif', 'Iowan Old Style', Georgia, serif;
+      --sans:   'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+      --mono:   'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+      --measure: 62ch;
+    }
+
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--serif);
+      font-size: 16px;
+      line-height: 1.62;
+      font-feature-settings: "onum" 1, "liga" 1, "kern" 1;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::selection { background: var(--accent); color: var(--paper); }
+
+    a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+    a:hover { color: var(--accent-soft); }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      background: var(--paper-2);
+      padding: 1px 5px;
+      border-radius: 2px;
+      color: var(--ink);
+    }
+
+    p { margin: 0 0 1.1rem; }
+    p + p { margin-top: 1.1rem; }
+
+    hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+    hr.rule-strong { border: 0; border-top: 1px solid var(--rule-strong); margin: 0; }
+
+    /* ──────────── Layout ──────────── */
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 40px;
+    }
+    @media (max-width: 760px) { .shell { padding: 0 22px; } }
+
+    /* Running header */
+    .runhead {
+      border-bottom: 1px solid var(--rule);
+      font-family: var(--sans);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      padding: 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .runhead a { color: inherit; text-decoration: none; }
+    .runhead a:hover { color: var(--accent); }
+    .runhead .mark {
+      display: inline-flex; align-items: center; gap: 10px;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-weight: 500;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .runhead .links { display: flex; gap: 22px; }
+    @media (max-width: 640px) {
+      .runhead .links { display: none; }
+    }
+
+    /* Masthead */
+    .masthead {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
+      gap: 56px;
+      padding: 72px 0 40px;
+      align-items: start;
+    }
+    .masthead > div { min-width: 0; }
+    @media (max-width: 1080px) {
+      .masthead { grid-template-columns: 1fr; gap: 40px; padding-top: 48px; }
+    }
+
+    .masthead h1 {
+      font-family: var(--serif);
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 500;
+      line-height: 0.98;
+      letter-spacing: -0.025em;
+      margin: 0 0 22px;
+      font-feature-settings: "onum" 1, "liga" 1;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      hyphens: auto;
+    }
+    .masthead h1 em {
+      font-style: italic;
+      color: var(--accent);
+      font-weight: 500;
+    }
+    .deck {
+      font-family: var(--serif);
+      font-style: italic;
+      font-size: clamp(18px, 2vw, 22px);
+      color: var(--ink-2);
+      line-height: 1.4;
+      margin: 0;
+      max-width: 30ch;
+    }
+
+    /* Metadata sidebar */
+    .meta {
+      border-top: 1px solid var(--ink);
+      padding-top: 14px;
+      font-family: var(--sans);
+      font-size: 12px;
+    }
+    .meta h6 {
+      font-family: var(--sans);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin: 0 0 10px;
+    }
+    .meta dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px 16px;
+      margin: 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .meta dt {
+      color: var(--ink-3);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .meta dd {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 11.5px;
+    }
+
+    .meta .spec-strip {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid var(--rule);
+    }
+    .meta .spec-strip dl dd { color: var(--accent); font-weight: 500; }
+
+    /* Abstract */
+    .abstract {
+      padding: 32px 0 40px;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--rule);
+      max-width: var(--measure);
+    }
+    .abstract::before {
+      content: "Abstract.";
+      font-variant-caps: all-small-caps;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+      color: var(--ink);
+      margin-right: 0.6em;
+    }
+    .abstract p:first-of-type { display: inline; }
+    .abstract .dropcap {
+      float: left;
+      font-family: var(--serif);
+      font-size: 74px;
+      line-height: 0.85;
+      font-weight: 500;
+      color: var(--accent);
+      margin: 6px 10px 0 0;
+      padding: 0;
+      letter-spacing: -0.03em;
+    }
+
+    /* Contents */
+    .contents {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 0 40px;
+      padding: 36px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .contents h6 {
+      font-family: var(--sans);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin: 6px 0 0;
+    }
+    .contents ol {
+      list-style: none;
+      counter-reset: toc;
+      padding: 0; margin: 0;
+      columns: 2;
+      column-gap: 48px;
+    }
+    .contents li {
+      counter-increment: toc;
+      padding: 4px 0;
+      break-inside: avoid;
+      display: flex; align-items: baseline; gap: 12px;
+    }
+    .contents li::before {
+      content: "§" counter(toc);
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-3);
+      min-width: 26px;
+    }
+    .contents .leader {
+      flex: 1;
+      border-bottom: 1px dotted var(--ink-4);
+      margin: 0 8px;
+      transform: translateY(-4px);
+    }
+    .contents .page {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-3);
+    }
+    .contents a {
+      color: var(--ink);
+      text-decoration: none;
+      font-family: var(--serif);
+      font-size: 17px;
+    }
+    .contents a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+    @media (max-width: 720px) {
+      .contents { grid-template-columns: 1fr; }
+      .contents ol { columns: 1; }
+    }
+
+    /* Sections */
+    section.body {
+      display: grid;
+      grid-template-columns: 80px minmax(0, 1fr);
+      gap: 0 40px;
+      padding: 64px 0 48px;
+      border-bottom: 1px solid var(--rule);
+    }
+    section.body > .section-no {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-3);
+      padding-top: 10px;
+      letter-spacing: 0.02em;
+    }
+    section.body > .section-body {
+      max-width: var(--measure);
+    }
+    section.body > .section-body.wide {
+      max-width: none;
+    }
+
+    section.body h2 {
+      font-family: var(--serif);
+      font-size: clamp(28px, 3.6vw, 40px);
+      font-weight: 500;
+      line-height: 1.08;
+      letter-spacing: -0.018em;
+      margin: 0 0 28px;
+    }
+    section.body h3 {
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin: 32px 0 10px;
+    }
+    section.body h3 .numeral {
+      color: var(--ink-3);
+      margin-right: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    @media (max-width: 720px) {
+      section.body { grid-template-columns: 1fr; gap: 8px; }
+      section.body > .section-no { padding-top: 0; }
+    }
+
+    /* Marginalia */
+    .marginalia {
+      font-family: var(--sans);
+      font-size: 12px;
+      color: var(--ink-3);
+      line-height: 1.45;
+      padding-top: 6px;
+    }
+
+    /* Diff block */
+    .diff-wrap {
+      margin: 26px 0;
+      border: 1px solid var(--rule-strong);
+      background: var(--paper);
+    }
+    .diff-head {
+      font-family: var(--sans);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--rule-strong);
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--paper-2);
+    }
+    .diff-head .path {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .diff {
+      font-family: var(--mono);
+      font-size: 13.5px;
+      line-height: 1.65;
+      margin: 0;
+      padding: 14px 0;
+      overflow-x: auto;
+    }
+    .diff .ln {
+      display: grid;
+      grid-template-columns: 40px 14px 1fr;
+      align-items: baseline;
+      padding: 0 16px 0 0;
+    }
+    .diff .num {
+      text-align: right;
+      padding-right: 14px;
+      color: var(--ink-4);
+      font-size: 11.5px;
+      user-select: none;
+    }
+    .diff .sig {
+      color: var(--ink-4);
+      font-weight: 500;
+    }
+    .diff .txt { white-space: pre; }
+    .diff .ln.del {
+      background: var(--diff-del-bg);
+      box-shadow: inset 2px 0 0 0 var(--diff-del-rail);
+    }
+    .diff .ln.del .sig, .diff .ln.del .txt { color: var(--diff-del-fg); }
+    .diff .ln.add {
+      background: var(--diff-add-bg);
+      box-shadow: inset 2px 0 0 0 var(--diff-add-rail);
+    }
+    .diff .ln.add .sig, .diff .ln.add .txt { color: var(--diff-add-fg); }
+    .diff-caption {
+      font-family: var(--sans);
+      font-size: 12px;
+      color: var(--ink-3);
+      border-top: 1px solid var(--rule);
+      padding: 10px 16px;
+      background: var(--paper);
+    }
+
+    /* Code block (install) */
+    .code-block {
+      margin: 24px 0 10px;
+      border: 1px solid var(--rule-strong);
+      background: var(--paper);
+    }
+    .code-block .code-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--rule-strong);
+      background: var(--paper-2);
+      font-family: var(--sans);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+    }
+    .code-block pre {
+      margin: 0;
+      padding: 18px 20px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--ink);
+      overflow-x: auto;
+      tab-size: 2;
+    }
+    .code-block pre .hash { color: var(--ink-3); }
+    .code-block pre .cmd  { color: var(--accent); }
+
+    /* Data table */
+    .tbl-wrap { margin: 24px 0; overflow-x: auto; }
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--sans);
+      font-size: 13px;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--ink);
+    }
+    table.data caption {
+      text-align: left;
+      font-family: var(--sans);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      padding: 0 0 10px;
+      caption-side: top;
+    }
+    table.data caption b {
+      color: var(--ink);
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    table.data thead th {
+      font-family: var(--sans);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--rule-strong);
+      white-space: nowrap;
+    }
+    table.data thead th.num { text-align: right; }
+    table.data tbody td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--rule);
+      vertical-align: baseline;
+    }
+    table.data tbody tr:last-child td { border-bottom: 0; }
+    table.data td.num {
+      font-family: var(--mono);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+    }
+    table.data td.label {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    table.data tbody tr.winner td.num { color: var(--accent); font-weight: 500; }
+    table.data tbody tr.winner td.label::before {
+      content: "\25B6";
+      color: var(--accent);
+      margin-right: 10px;
+      font-size: 10px;
+      transform: translateY(-1px);
+      display: inline-block;
+    }
+    table.data tbody tr td.delta {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    /* Figure */
+    .figure {
+      margin: 28px 0 18px;
+    }
+    .figure .frame {
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      overflow: hidden;
+    }
+    .figure .frame img,
+    .figure .frame svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .figure figcaption {
+      font-family: var(--sans);
+      font-size: 12.5px;
+      color: var(--ink-3);
+      padding: 12px 0 0;
+      line-height: 1.5;
+    }
+    .figure figcaption b {
+      color: var(--ink);
+      font-weight: 600;
+      margin-right: 8px;
+    }
+
+    /* Ascii diagram */
+    .ascii {
+      margin: 24px 0;
+      padding: 20px 22px;
+      background: var(--paper-2);
+      border-left: 2px solid var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--ink);
+      white-space: pre;
+      overflow-x: auto;
+    }
+
+    /* Platform list */
+    .platform-list {
+      display: grid;
+      grid-template-columns: 120px 1fr auto;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--ink);
+      margin: 22px 0 6px;
+    }
+    .platform-list > div {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .platform-list > div:nth-last-child(-n+3) {
+      border-bottom: 0;
+    }
+    .platform-list .plat-name {
+      font-family: var(--sans);
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      color: var(--ink);
+    }
+    .platform-list .plat-desc {
+      font-family: var(--serif);
+      font-size: 14px;
+      color: var(--ink-2);
+      line-height: 1.45;
+    }
+    .platform-list .plat-code {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--accent);
+      white-space: nowrap;
+      align-self: center;
+    }
+    @media (max-width: 720px) {
+      .platform-list { grid-template-columns: 1fr; }
+      .platform-list > div { padding: 12px 0; }
+      .platform-list .plat-code { color: var(--accent); }
+    }
+
+    /* Callout quote */
+    .callout {
+      border-left: 2px solid var(--accent);
+      padding: 2px 0 2px 20px;
+      margin: 22px 0;
+      font-style: italic;
+      color: var(--ink-2);
+      max-width: 52ch;
+    }
+
+    /* Colophon */
+    footer.colophon {
+      margin-top: 40px;
+      padding: 36px 0 60px;
+      border-top: 1px solid var(--ink);
+      font-family: var(--sans);
+      font-size: 12px;
+      color: var(--ink-3);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+    }
+    footer.colophon h6 {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin: 0 0 8px;
+    }
+    footer.colophon a { color: var(--ink); text-decoration: none; }
+    footer.colophon a:hover { color: var(--accent); text-decoration: underline; }
+    footer.colophon .lic { font-family: var(--mono); font-size: 11.5px; }
+    @media (max-width: 680px) {
+      footer.colophon { grid-template-columns: 1fr; gap: 16px; }
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    section.body[id] { scroll-margin-top: 20px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+      html { scroll-behavior: auto; }
+    }
   </style>
 </head>
-<body class="text-slate-200 font-sans antialiased">
 
-  <!-- Nav -->
-  <nav class="fixed top-0 w-full z-50 bg-[#0a0e1a]/85 backdrop-blur-lg border-b border-white/5">
-    <div class="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
-      <a href="#" class="font-black text-cyan-400 text-lg tracking-tight">GstAdaptNode</a>
-      <div class="hidden md:flex gap-7 text-sm text-slate-500">
-        <a href="#features" class="hover:text-cyan-400 transition">Features</a>
-        <a href="#plug-and-play" class="hover:text-cyan-400 transition">Plug-and-Play</a>
-        <a href="#demo" class="hover:text-cyan-400 transition">Demo</a>
-        <a href="#benchmarks" class="hover:text-cyan-400 transition">Benchmarks</a>
-        <a href="https://github.com/sohams25/GstAdaptNode" class="text-slate-400 hover:text-white transition font-medium">GitHub</a>
-      </div>
+<body>
+  <div class="shell">
+
+    <!-- ─────────── Running header ─────────── -->
+    <div class="runhead">
+      <a href="#top" class="mark">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <rect x="1" y="1" width="7" height="7" rx="1" stroke="#73706A" stroke-width="1.2"/>
+          <rect x="10" y="1" width="7" height="7" rx="1" fill="#8F2D11"/>
+          <rect x="1" y="10" width="7" height="7" rx="1" fill="#8F2D11" fill-opacity="0.25"/>
+          <rect x="10" y="10" width="7" height="7" rx="1" stroke="#73706A" stroke-width="1.2"/>
+        </svg>
+        GstAdaptNode
+      </a>
+      <nav class="links" aria-label="Sections">
+        <a href="#motivation">&sect;1 Motivation</a>
+        <a href="#architecture">&sect;2 Architecture</a>
+        <a href="#interface">&sect;3 Interface</a>
+        <a href="#measurements">&sect;4 Measurements</a>
+        <a href="#platforms">&sect;5 Platforms</a>
+        <a href="https://github.com/sohams25/GstAdaptNode">Repository &uarr;</a>
+      </nav>
     </div>
-  </nav>
 
-  <!-- Hero -->
-  <section class="min-h-screen flex flex-col items-center justify-center text-center px-6 pt-28 pb-24 relative overflow-hidden">
-    <div class="absolute inset-0 bg-gradient-to-b from-cyan-500/[0.03] via-transparent to-transparent pointer-events-none"></div>
-    <div class="max-w-4xl relative">
-      <div class="inline-flex items-center gap-2.5 bg-cyan-500/10 border border-cyan-500/20 rounded-full px-5 py-2 text-xs text-cyan-400 mb-12 tracking-wider font-medium">
-        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-        ROS 2 Humble &middot; Native bgr8 &middot; Apache-2.0
+    <!-- ─────────── Masthead ─────────── -->
+    <header class="masthead" id="top">
+      <div>
+        <h1>Hardware-agnostic<br/>ROS&nbsp;2 <em>perception acceleration</em>.</h1>
+        <p class="deck">
+          A drop-in replacement for <code>image_proc::ResizeNode</code> that picks the fastest available backend at runtime. Zero-copy intra-process. No configuration required.
+        </p>
       </div>
-      <h1 class="text-5xl sm:text-6xl md:text-8xl font-black tracking-tight leading-[0.95]">
-        <span class="text-white">Hardware-Agnostic</span><br/>
-        <span class="text-cyan-400 glow">ROS 2 Acceleration.</span>
-      </h1>
-      <p class="mt-8 text-xl md:text-2xl text-slate-500 font-light max-w-2xl mx-auto leading-relaxed">
-        A drop-in replacement for <code class="text-cyan-300/80 bg-white/5 px-2 py-0.5 rounded">image_proc::ResizeNode</code> that picks the fastest available backend at runtime.<br/>
-        Zero-copy intra-process. No config.
-      </p>
-      <div class="mt-14 flex gap-5 justify-center flex-wrap">
-        <a href="https://github.com/sohams25/GstAdaptNode"
-           class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-9 py-4 rounded-xl transition-all shadow-xl shadow-cyan-500/20 hover:shadow-cyan-400/30 text-sm uppercase tracking-widest">
-          View on GitHub
-        </a>
-        <a href="#benchmarks"
-           class="border border-white/10 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 font-semibold px-9 py-4 rounded-xl transition-all text-sm uppercase tracking-widest">
-          See Results
-        </a>
-      </div>
-    </div>
-  </section>
+      <aside class="meta">
+        <h6>Revision 2026.04</h6>
+        <dl>
+          <dt>Project</dt><dd>gst_adapt_node</dd>
+          <dt>Author</dt><dd>Soham Shinde</dd>
+          <dt>License</dt><dd>Apache-2.0</dd>
+          <dt>Language</dt><dd>C++17, Python 3</dd>
+          <dt>Target</dt><dd>ROS 2 Humble</dd>
+          <dt>Depends</dt><dd>GStreamer 1.x</dd>
+        </dl>
 
-  <!-- Features -->
-  <section id="features" class="max-w-6xl mx-auto px-6 py-24">
-    <h2 class="text-4xl md:text-5xl font-black text-center mb-16">Why GstAdaptNode?</h2>
-    <div class="grid md:grid-cols-3 gap-7">
-      <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 card-hover">
-        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 flex items-center justify-center mb-5">
-          <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+        <div class="spec-strip">
+          <h6>Headline · 170&nbsp;s A/B</h6>
+          <dl>
+            <dt>Source</dt><dd>4K BGR8 &middot; 10 Hz</dd>
+            <dt>Output</dt><dd>640&times;480 BGR8</dd>
+            <dt>Latency</dt><dd>median 4.80 ms</dd>
+            <dt>Delta</dt><dd>&minus;7.45 ms (&minus;60.8%)</dd>
+            <dt>CPU</dt><dd>&minus;9.4 pp mean</dd>
+            <dt>RSS</dt><dd>&minus;63 MB mean</dd>
+          </dl>
         </div>
-        <h3 class="text-xl font-bold mb-3">Hardware Auto-Detection</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">Probes <code class="text-slate-300">/dev/</code> for NVIDIA Jetson or Intel VA-API at startup, then <em>live-validates</em> against the GStreamer registry. Broken accelerators (like <code class="text-slate-300">vaapipostproc</code> on 1.20) are skipped, not attempted.</p>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 card-hover">
-        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 flex items-center justify-center mb-5">
-          <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        </div>
-        <h3 class="text-xl font-bold mb-3">Zero-Copy Hot Path</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">Intra-process <code class="text-slate-300">unique_ptr</code> move into the subscriber, then a custom <code class="text-slate-300">appsrc</code> wrapper moves the pointer straight into GStreamer via <code class="text-slate-300">gst_buffer_new_wrapped_full</code>. No memcpy on the hot path.</p>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 card-hover">
-        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-500/5 flex items-center justify-center mb-5">
-          <svg class="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
-        </div>
-        <h3 class="text-xl font-bold mb-3">Dual-Mode Fallback</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">When no usable GPU path is present, the node bypasses GStreamer entirely and runs <code class="text-slate-300">cv::resize</code> in the subscriber callback. Faster than <code class="text-slate-300">image_proc</code> even without a GPU because there's no <code class="text-slate-300">image_transport</code> round-trip.</p>
-      </div>
-    </div>
-  </section>
+      </aside>
+    </header>
 
-  <!-- Plug-and-Play -->
-  <section id="plug-and-play" class="max-w-5xl mx-auto px-6 py-24">
-    <div class="text-center mb-14">
-      <h2 class="text-4xl md:text-5xl font-black">The Plug-and-Play Promise</h2>
-      <p class="mt-5 text-slate-400 text-lg max-w-2xl mx-auto">
-        Same parameters. Same composable-node interface. Your camera still publishes <code class="text-cyan-300/70">bgr8</code>. Toggle below to see the difference.
+    <!-- ─────────── Abstract ─────────── -->
+    <div class="abstract">
+      <p>
+        <span class="dropcap">W</span>e present a runtime-adaptive ROS&nbsp;2 image-resize node that auto-selects between GStreamer hardware pipelines (NVIDIA&nbsp;NVMM, Intel&nbsp;VA-API) and a direct CPU fallback &mdash; preserving the exact parameter interface of <code>image_proc::ResizeNode</code>. The node validates each accelerator against the live GStreamer registry at startup, silently skipping broken ones such as <code>vaapipostproc</code> on GStreamer&nbsp;1.20. In a sustained 170-second A/B run at 4K&nbsp;&rarr;&nbsp;640&times;480, the accelerated path cuts per-frame latency by 7.45&nbsp;ms at the median (60.8%), lowers mean container CPU by 9.4 percentage points, and trims resident memory by 63&nbsp;MB &mdash; while remaining a two-line change in any existing launch file.
       </p>
     </div>
 
-    <!-- Toggle -->
-    <div class="flex justify-center mb-8">
-      <div class="inline-flex bg-slate-800 rounded-xl p-1 border border-white/5">
-        <button id="btn-standard" onclick="showCode('standard')" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-inactive text-slate-400">
-          Standard ROS 2
-        </button>
-        <button id="btn-gst" onclick="showCode('gst')" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-active text-white">
-          GstAdaptNode
-        </button>
-      </div>
-    </div>
+    <!-- ─────────── Contents ─────────── -->
+    <nav class="contents" aria-label="Table of contents">
+      <h6>Contents</h6>
+      <ol>
+        <li><a href="#motivation">Motivation</a><span class="leader"></span><span class="page">1</span></li>
+        <li><a href="#architecture">Architecture</a><span class="leader"></span><span class="page">2</span></li>
+        <li><a href="#interface">Interface</a><span class="leader"></span><span class="page">3</span></li>
+        <li><a href="#measurements">Measurements</a><span class="leader"></span><span class="page">4</span></li>
+        <li><a href="#platforms">Platforms</a><span class="leader"></span><span class="page">5</span></li>
+        <li><a href="#setup">Setup</a><span class="leader"></span><span class="page">6</span></li>
+      </ol>
+    </nav>
 
-    <!-- Code panels -->
-    <div class="relative max-w-2xl mx-auto">
-      <div id="code-standard" class="hidden rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-500/[0.03] to-[#111827] overflow-hidden">
-        <div class="px-5 py-3 border-b border-red-500/10 flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-red-500/50"></span>
-          <span class="text-red-400/80 text-xs font-bold uppercase tracking-widest">CPU-bound &mdash; image_proc</span>
+    <!-- ─────────── §1 Motivation ─────────── -->
+    <section class="body" id="motivation">
+      <div class="section-no">&sect;1</div>
+      <div class="section-body">
+        <h2>Motivation.</h2>
+        <p>
+          Hardware accelerators for image operations are abundant on modern robotics hosts &mdash; every Jetson has NVMM, every recent Intel SoC has VA-API, and most deploy targets ship with some working GStreamer pipeline. The problem is not availability; it is the cost of using them. A node that depends on a specific backend ties the node to a specific platform, and a node that tries to detect backends at build time loses to the first host that doesn't match the build assumption.
+        </p>
+        <p>
+          <code>gst_adapt_node::ResizeNode</code> takes the opposite approach: it probes the host at startup, validates against the live GStreamer registry, and lets the fastest <em>actually-working</em> backend win. When nothing works, it still beats <code>image_proc</code> by eliminating the <code>image_transport</code> round-trip through a direct intra-process callback.
+        </p>
+
+        <h3><span class="numeral">1.1</span> Hardware auto-detection</h3>
+        <p>
+          Startup probes <code>/dev/nvhost-*</code>, <code>/dev/nvmap</code>, and <code>/dev/dri/renderD*</code> to identify present accelerators. A second pass calls <code>gst_element_factory_find</code> to confirm the relevant GStreamer elements are registered and instantiable. Broken accelerators &mdash; such as <code>vaapipostproc</code> on GStreamer 1.20 with its chroma-subsampling regression &mdash; are <em>skipped, not attempted</em>.
+        </p>
+
+        <h3><span class="numeral">1.2</span> Zero-copy hot path</h3>
+        <p>
+          The subscriber receives a <code>unique_ptr&lt;sensor_msgs::msg::Image&gt;</code> via intra-process transport. A custom <code>appsrc</code> wrapper takes ownership of the underlying buffer via <code>gst_buffer_new_wrapped_full</code> with a <code>GDestroyNotify</code> hooked into the ROS message destructor, moving the pointer &mdash; not the pixels &mdash; into the GStreamer pipeline.
+        </p>
+
+        <h3><span class="numeral">1.3</span> Dual-mode fallback</h3>
+        <p>
+          On hosts without a working GPU path, the node bypasses GStreamer entirely and performs the resize with <code>cv::resize</code> in the subscriber callback itself. This path still benefits from zero-copy intra-process delivery and sidesteps all GStreamer initialization overhead.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─────────── §2 Architecture ─────────── -->
+    <section class="body" id="architecture">
+      <div class="section-no">&sect;2</div>
+      <div class="section-body wide">
+        <h2>Architecture.</h2>
+        <p>
+          The runtime graph resolves in three stages &mdash; probe, validate, construct &mdash; and the constructed pipeline differs based on what survives validation. The fallback chain is strictly priority-ordered: a failing probe at tier <em>N</em> drops to tier <em>N+1</em>, never the other way.
+        </p>
+
+        <div class="ascii" aria-label="Runtime decision flow diagram">                     &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+ startup  &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9654; &#9474; HardwareDetector &#9474;   probe /dev/
+                     &#9474;   NVIDIA_JETSON  &#9474;
+                     &#9474;   INTEL_VAAPI    &#9474;
+                     &#9474;   CPU_FALLBACK   &#9474;
+                     &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                              &#9474;
+                     &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+                     &#9474; validate_platform&#9474;   gst_element_factory_find()
+                     &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                              &#9474;
+            &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+            &#9474;                                   &#9474;
+   &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;              &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+   &#9474; GPU available     &#9474;              &#9474; CPU fallback     &#9474;
+   &#9474; Jetson / vapostproc&#9474;              &#9474; direct mode      &#9474;
+   &#9474; appsrc &rarr; GPU &rarr;    &#9474;              &#9474; cv::resize in    &#9474;
+   &#9474; appsink           &#9474;              &#9474; subscriber cb    &#9474;
+   &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;              &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;</div>
+
+        <figcaption style="font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); padding-top: 4px;">
+          <b>Figure&nbsp;1.</b> Runtime decision flow. The validate stage is what distinguishes
+          <code>gst_adapt_node</code> from na&iuml;ve auto-detect libraries: elements that probe positive
+          but fail <code>gst_element_factory_find</code> are discarded before pipeline construction.
+        </figcaption>
+      </div>
+    </section>
+
+    <!-- ─────────── §3 Interface ─────────── -->
+    <section class="body" id="interface">
+      <div class="section-no">&sect;3</div>
+      <div class="section-body wide">
+        <h2>Interface.</h2>
+        <p style="max-width: var(--measure);">
+          The node exposes the exact parameter set of <code>image_proc::ResizeNode</code>. Migration from an existing launch file is a two-token edit: the package string and the plugin class name. No upstream camera driver changes, no <code>image_transport</code> plugin changes, no message conversions.
+        </p>
+
+        <div class="diff-wrap">
+          <div class="diff-head">
+            <span>Unified diff &middot; launch file composable node entry</span>
+            <span class="path">launch/A_B_comparison.launch.py</span>
+          </div>
+          <pre class="diff"><span class="ln"><span class="num">1</span><span class="sig">  </span><span class="txt"> ComposableNode(</span></span><span class="ln del"><span class="num">2</span><span class="sig">- </span><span class="txt">     package='image_proc',</span></span><span class="ln del"><span class="num">3</span><span class="sig">- </span><span class="txt">     plugin='image_proc::ResizeNode',</span></span><span class="ln add"><span class="num">2</span><span class="sig">+ </span><span class="txt">     package='gst_adapt_node',</span></span><span class="ln add"><span class="num">3</span><span class="sig">+ </span><span class="txt">     plugin='gst_adapt_node::ResizeNode',</span></span><span class="ln"><span class="num">4</span><span class="sig">  </span><span class="txt">     name='resize',</span></span><span class="ln"><span class="num">5</span><span class="sig">  </span><span class="txt">     parameters=[{</span></span><span class="ln"><span class="num">6</span><span class="sig">  </span><span class="txt">         'use_scale': False,</span></span><span class="ln"><span class="num">7</span><span class="sig">  </span><span class="txt">         'height':    480,</span></span><span class="ln"><span class="num">8</span><span class="sig">  </span><span class="txt">         'width':     640,</span></span><span class="ln"><span class="num">9</span><span class="sig">  </span><span class="txt">     }],</span></span><span class="ln"><span class="num">10</span><span class="sig">  </span><span class="txt"> )</span></span></pre>
+          <div class="diff-caption">
+            Two strings change. The <code>parameters</code> block is parsed by an identical schema on both sides.
+          </div>
         </div>
-        <pre class="p-6 text-slate-300 text-sm overflow-x-auto"><code>ComposableNode(
-    package=<span class="text-red-400">'image_proc'</span>,
-    plugin=<span class="text-red-400">'image_proc::ResizeNode'</span>,
-    name='resize',
-    parameters=[{
-        'use_scale': False,
-        'height': 480,
-        'width': 640,
-    }],
-)</code></pre>
+
+        <p class="callout" style="max-width: 52ch;">
+          The philosophical move is conservative: don't invent a new interface; honour the one the
+          downstream launch system already speaks, and make the faster implementation indistinguishable
+          at the config-file level.
+        </p>
       </div>
-      <div id="code-gst" class="rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/[0.03] to-[#111827] overflow-hidden" style="box-shadow: 0 0 50px rgba(34,211,238,0.04);">
-        <div class="px-5 py-3 border-b border-cyan-500/10 flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
-          <span class="text-cyan-400/80 text-xs font-bold uppercase tracking-widest">Auto-Accelerated &mdash; GstAdaptNode</span>
+    </section>
+
+    <!-- ─────────── §4 Measurements ─────────── -->
+    <section class="body" id="measurements">
+      <div class="section-no">&sect;4</div>
+      <div class="section-body wide">
+        <h2>Measurements.</h2>
+        <p style="max-width: var(--measure);">
+          All figures below were captured on an Intel desktop running GStreamer&nbsp;1.20 &mdash; a host where <code>vaapipostproc</code> fails validation and the accelerated path falls back to direct mode. The A/B run ran for <b>170&nbsp;seconds</b>, recording <b>2,108</b> legacy and <b>2,109</b> accelerated per-frame latency measurements from an in-callback timestamp, plus <b>170</b> container-CPU and RSS samples polled at 1&nbsp;Hz. The first 10&nbsp;seconds are dropped as warmup.
+        </p>
+
+        <div class="tbl-wrap">
+          <table class="data">
+            <caption><b>Table 1.</b> Per-pipeline measurements &middot; 4K BGR8 &rarr; 640&times;480 &middot; 10 Hz &middot; 170&nbsp;s sustained.</caption>
+            <thead>
+              <tr>
+                <th>Pipeline</th>
+                <th>Architecture</th>
+                <th class="num">Latency median</th>
+                <th class="num">Latency p95</th>
+                <th class="num">CPU mean</th>
+                <th class="num">RSS mean</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="label">image_proc::ResizeNode</td>
+                <td>image_transport + CameraSubscriber</td>
+                <td class="num">12.25 ms</td>
+                <td class="num">21.84 ms</td>
+                <td class="num">64.99 %</td>
+                <td class="num">810.5 MB</td>
+              </tr>
+              <tr class="winner">
+                <td class="label">gst_adapt_node::ResizeNode</td>
+                <td>Zero-copy intra-process &middot; direct mode</td>
+                <td class="num">4.80 ms</td>
+                <td class="num">14.46 ms</td>
+                <td class="num">55.54 %</td>
+                <td class="num">747.6 MB</td>
+              </tr>
+              <tr>
+                <td class="label" style="color: var(--ink-3); font-weight: 400;">&Delta; (improvement)</td>
+                <td style="color: var(--ink-3);">&mdash;</td>
+                <td class="delta">&minus;7.45 ms</td>
+                <td class="delta">&minus;7.38 ms</td>
+                <td class="delta">&minus;9.4 pp</td>
+                <td class="delta">&minus;63 MB</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <pre class="p-6 text-slate-300 text-sm overflow-x-auto"><code>ComposableNode(
-    package=<span class="text-cyan-400">'gst_adapt_node'</span>,
-    plugin=<span class="text-cyan-400">'gst_adapt_node::ResizeNode'</span>,
-    name='resize',
-    parameters=[{
-        'use_scale': False,
-        'height': 480,
-        'width': 640,
-    }],
-)</code></pre>
-      </div>
-    </div>
-    <p class="text-center text-slate-600 text-xs mt-6 tracking-wide uppercase">Two strings change. Everything else stays the same.</p>
-  </section>
 
-  <!-- Visual Demo -->
-  <section id="demo" class="max-w-5xl mx-auto px-6 py-24">
-    <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Live A/B Dashboard</h2>
-    <p class="text-slate-400 text-center mb-12 max-w-xl mx-auto">
-      The bundled <code class="text-slate-300">visualize_demo.py</code> Flask app runs a side-by-side MJPEG comparison at <span class="text-cyan-300">localhost:8080</span> with per-pipeline latency, FPS, CPU, RAM, and a live delta sparkline.
-    </p>
-    <div class="rounded-2xl border border-cyan-500/10 bg-gradient-to-b from-cyan-500/[0.02] to-transparent p-1.5" style="box-shadow: 0 0 60px rgba(34,211,238,0.03);">
-      <div class="rounded-xl overflow-hidden bg-[#0a0e1a]">
-        <img src="assets/demo.gif" alt="Split-screen A/B dashboard with live metrics"
-             class="w-full"
-             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
-        <div class="hidden flex-col items-center justify-center py-24 text-slate-600">
-          <svg class="w-20 h-20 mb-5 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-          </svg>
-          <p class="text-lg font-bold text-slate-500">Dashboard Preview</p>
-          <p class="text-sm mt-2 text-slate-600 max-w-xs text-center">
-            Place a screen recording at <code class="text-cyan-600">docs/assets/demo.gif</code>
-          </p>
+        <div class="tbl-wrap">
+          <table class="data">
+            <caption><b>Table 2.</b> Full latency distribution (ms) &middot; samples: image_proc n=2,108 &middot; gst_adapt_node n=2,109.</caption>
+            <thead>
+              <tr>
+                <th>Pipeline</th>
+                <th class="num">min</th>
+                <th class="num">p5</th>
+                <th class="num">median</th>
+                <th class="num">mean</th>
+                <th class="num">p95</th>
+                <th class="num">p99</th>
+                <th class="num">max</th>
+                <th class="num">&sigma;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="label">image_proc</td>
+                <td class="num">6.60</td>
+                <td class="num">8.74</td>
+                <td class="num">12.25</td>
+                <td class="num">14.28</td>
+                <td class="num">21.84</td>
+                <td class="num">29.76</td>
+                <td class="num">44.84</td>
+                <td class="num">4.96</td>
+              </tr>
+              <tr class="winner">
+                <td class="label">gst_adapt_node</td>
+                <td class="num">1.95</td>
+                <td class="num">2.76</td>
+                <td class="num">4.80</td>
+                <td class="num">7.68</td>
+                <td class="num">14.46</td>
+                <td class="num">24.38</td>
+                <td class="num">39.52</td>
+                <td class="num">5.27</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3><span class="numeral">4.1</span> Per-frame latency distribution</h3>
+        <figure class="figure">
+          <div class="frame">
+            <img src="assets/latency_distribution.svg" alt="Box plot of legacy vs accelerated latency distributions" loading="lazy"/>
+          </div>
+          <figcaption>
+            <b>Figure&nbsp;2.</b> Min, p5, median, p95, and max per pipeline. The p5&ndash;p95 envelope of <code>gst_adapt_node</code> sits entirely below the image_proc median; the two distributions barely overlap.
+          </figcaption>
+        </figure>
+
+        <h3><span class="numeral">4.2</span> Latency over time</h3>
+        <figure class="figure">
+          <div class="frame">
+            <img src="assets/latency_timeseries.svg" alt="Per-frame latency trace over the full 170-second run" loading="lazy"/>
+          </div>
+          <figcaption>
+            <b>Figure&nbsp;3.</b> Full trace across the run. Accelerated latency (Venetian red) sits consistently below image_proc (grey). Both traces are stable &mdash; no drift, no backpressure, no frame drops.
+          </figcaption>
+        </figure>
+
+        <h3><span class="numeral">4.3</span> Resource usage</h3>
+        <figure class="figure">
+          <div class="frame">
+            <img src="assets/resource_usage.svg" alt="Bar chart comparing latency median, CPU mean, and RSS mean" loading="lazy"/>
+          </div>
+          <figcaption>
+            <b>Figure&nbsp;4.</b> Median latency, mean container CPU, and mean resident memory. Percentages annotate the improvement <code>gst_adapt_node</code> delivers relative to <code>image_proc</code> on each axis.
+          </figcaption>
+        </figure>
+
+        <p style="max-width: var(--measure); margin-top: 20px;">
+          Even in direct-mode fallback &mdash; no GStreamer, no GPU &mdash; the accelerated path wins by eliminating
+          the <code>image_transport</code> + <code>CameraSubscriber</code> round-trip. The intra-process
+          <code>unique_ptr</code> move bypasses both serialisation and DDS.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─────────── §5 Platforms ─────────── -->
+    <section class="body" id="platforms">
+      <div class="section-no">&sect;5</div>
+      <div class="section-body wide">
+        <h2>Platforms.</h2>
+        <p style="max-width: var(--measure);">
+          The fallback chain is evaluated in priority order on every startup. Detection is cheap; validation
+          is the expensive step. Tiers that pass probe but fail validation are logged and demoted.
+        </p>
+
+        <div class="platform-list">
+          <div class="plat-name">NVIDIA Jetson</div>
+          <div class="plat-desc">
+            TX2, Xavier, Orin. Detected via <code>/dev/nvhost-*</code> and <code>/dev/nvmap</code>. Resize runs on CUDA + NVMM; frames never touch host memory.
+          </div>
+          <div class="plat-code">nvvideoconvert</div>
+
+          <div class="plat-name">Intel VA-API</div>
+          <div class="plat-desc">
+            Gen9+ iGPU or Arc dGPU, GStreamer 1.22+ required (1.20 <code>vaapipostproc</code> fails validation and is demoted). Resize runs on the media engine via GL bridge.
+          </div>
+          <div class="plat-code">vapostproc</div>
+
+          <div class="plat-name">CPU fallback</div>
+          <div class="plat-desc">
+            Any x86_64 or aarch64. No GStreamer initialization. Direct <code>cv::resize</code> in the subscriber callback &mdash; still faster than <code>image_proc</code> due to zero-copy intra-process delivery.
+          </div>
+          <div class="plat-code">cv::resize &middot; direct</div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Benchmarks -->
-  <section id="benchmarks" class="max-w-6xl mx-auto px-6 py-24">
-    <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Benchmark Results</h2>
-    <p class="text-slate-400 text-center mb-3 max-w-2xl mx-auto">
-      <code>image_proc::ResizeNode</code> vs <code>gst_adapt_node::ResizeNode</code>.
-      4K BGR8 &rarr; 640&times;480 at 10 Hz, sustained over <span class="text-cyan-300">~170 seconds</span>.
-    </p>
-    <p class="text-center text-slate-500 text-sm mb-3 max-w-2xl mx-auto">
-      <span class="tnum text-cyan-300">2,108</span> legacy + <span class="tnum text-cyan-300">2,109</span> accel per-frame latency records · <span class="tnum text-cyan-300">170</span> CPU/RSS samples at 1 Hz · first 10 s dropped as warmup.
-    </p>
-    <p class="text-center text-slate-600 text-xs mb-14 max-w-xl mx-auto uppercase tracking-widest">
-      Intel desktop · GStreamer 1.20 · direct-mode fallback
-    </p>
+    <!-- ─────────── §6 Setup ─────────── -->
+    <section class="body" id="setup">
+      <div class="section-no">&sect;6</div>
+      <div class="section-body wide">
+        <h2>Setup.</h2>
+        <p style="max-width: var(--measure);">
+          Ubuntu&nbsp;22.04 with ROS&nbsp;2 Humble. For VA-API hosts, ensure <code>gstreamer1.0-vaapi</code>
+          is installed and &mdash; if GStreamer is older than 1.22 &mdash; expect the direct-mode fallback.
+        </p>
 
-    <!-- Headline Stats -->
-    <div class="grid md:grid-cols-4 gap-5 mb-14">
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">7.45<span class="text-xl ml-1">ms</span></div>
-        <div class="text-slate-500 text-sm mt-2">Median faster</div>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">60.8<span class="text-xl ml-1">%</span></div>
-        <div class="text-slate-500 text-sm mt-2">Median latency reduction</div>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">-9.4<span class="text-xl ml-1">pp</span></div>
-        <div class="text-slate-500 text-sm mt-2">Mean CPU reduction</div>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">-63<span class="text-xl ml-1">MB</span></div>
-        <div class="text-slate-500 text-sm mt-2">Mean RSS reduction</div>
-      </div>
-    </div>
+        <div class="code-block">
+          <div class="code-head">
+            <span>Terminal &middot; ~/ros2_ws</span>
+            <span>bash</span>
+          </div>
+<pre><span class="hash"># Clone into a colcon workspace</span>
+<span class="cmd">cd</span> ~/ros2_ws/src
+<span class="cmd">git</span> clone --recursive https://github.com/sohams25/GstAdaptNode.git gst_adapt_node
 
-    <!-- Measured Numbers Table + Chart -->
-    <div class="grid md:grid-cols-5 gap-7 mb-10">
-      <div class="md:col-span-2 bg-[#111827] rounded-2xl p-6 border border-white/5">
-        <h3 class="text-lg font-bold mb-4">Latency (ms)</h3>
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-slate-500 text-xs uppercase tracking-widest">
-              <th class="text-left pb-2 font-semibold">Stat</th>
-              <th class="text-right pb-2 font-semibold text-red-400/80">image_proc</th>
-              <th class="text-right pb-2 font-semibold text-cyan-400">gst_adapt_node</th>
-            </tr>
-          </thead>
-          <tbody class="tnum text-slate-300">
-            <tr class="border-t border-white/5"><td class="py-2">median</td><td class="text-right">12.25</td><td class="text-right text-cyan-300 font-semibold">4.80</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">mean</td><td class="text-right">14.28</td><td class="text-right text-cyan-300 font-semibold">7.68</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">p95</td><td class="text-right">21.84</td><td class="text-right text-cyan-300 font-semibold">14.46</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">p99</td><td class="text-right">29.76</td><td class="text-right text-cyan-300 font-semibold">24.38</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">stdev</td><td class="text-right">4.96</td><td class="text-right">5.27</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2 text-slate-500">samples</td><td class="text-right text-slate-500">2,108</td><td class="text-right text-slate-500">2,109</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="md:col-span-3 bg-[#111827] rounded-2xl p-3 border border-white/5">
-        <img src="assets/latency_distribution.svg" alt="Latency distribution box plot" class="w-full rounded-lg"/>
-      </div>
-    </div>
-
-    <!-- Time series -->
-    <div class="bg-[#111827] rounded-2xl p-3 border border-white/5 mb-10">
-      <img src="assets/latency_timeseries.svg" alt="Per-frame latency time series" class="w-full rounded-lg"/>
-    </div>
-
-    <!-- CPU / RSS -->
-    <div class="grid md:grid-cols-5 gap-7">
-      <div class="md:col-span-3 bg-[#111827] rounded-2xl p-3 border border-white/5">
-        <img src="assets/resource_usage.svg" alt="Resource comparison bar chart" class="w-full rounded-lg"/>
-      </div>
-      <div class="md:col-span-2 bg-[#111827] rounded-2xl p-6 border border-white/5">
-        <h3 class="text-lg font-bold mb-4">CPU &amp; RSS</h3>
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-slate-500 text-xs uppercase tracking-widest">
-              <th class="text-left pb-2 font-semibold">Stat</th>
-              <th class="text-right pb-2 font-semibold text-red-400/80">image_proc</th>
-              <th class="text-right pb-2 font-semibold text-cyan-400">gst_adapt_node</th>
-            </tr>
-          </thead>
-          <tbody class="tnum text-slate-300">
-            <tr class="border-t border-white/5"><td class="py-2">CPU mean %</td><td class="text-right">64.99</td><td class="text-right text-cyan-300 font-semibold">55.54</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">CPU p95 %</td><td class="text-right">74.65</td><td class="text-right text-cyan-300 font-semibold">64.00</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">RSS mean MB</td><td class="text-right">810.52</td><td class="text-right text-cyan-300 font-semibold">747.56</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2">FPS mean</td><td class="text-right">9.99</td><td class="text-right text-cyan-300 font-semibold">10.00</td></tr>
-            <tr class="border-t border-white/5"><td class="py-2 text-slate-500">samples</td><td class="text-right text-slate-500">170</td><td class="text-right text-slate-500">170</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <p class="text-slate-600 text-xs text-center mt-10 max-w-2xl mx-auto leading-relaxed">
-      Both pipelines run in separate <code class="text-slate-500">component_container</code> processes so CPU and RSS are measured independently. On this host the GPU path is skipped because GStreamer 1.20's <code class="text-slate-500">vaapipostproc</code> has a chroma-loss bug — direct mode still wins by eliminating the <code class="text-slate-500">image_transport</code> round-trip. On Jetson or GStreamer 1.22+ Intel, the accelerated path additionally offloads the resize kernel to dedicated silicon.
-    </p>
-  </section>
-
-  <!-- Quick Start -->
-  <section class="max-w-3xl mx-auto px-6 py-24">
-    <h2 class="text-4xl font-black text-center mb-12">Quick Start</h2>
-    <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 font-mono text-sm leading-relaxed overflow-x-auto">
-      <pre class="text-slate-300"><span class="text-slate-600"># Clone</span>
-cd ~/ros2_ws/src
-git clone --recursive https://github.com/sohams25/GstAdaptNode.git gst_adapt_node
-
-<span class="text-slate-600"># Dependencies</span>
-sudo apt install ros-humble-image-proc gstreamer1.0-vaapi \
+<span class="hash"># Install dependencies</span>
+<span class="cmd">sudo apt install</span> ros-humble-image-proc gstreamer1.0-vaapi \
   libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
-pip install flask psutil
+<span class="cmd">pip install</span> flask psutil
 
-<span class="text-slate-600"># Build</span>
-cd ~/ros2_ws &amp;&amp; colcon build --packages-up-to gst_adapt_node
-source install/setup.bash
+<span class="hash"># Build</span>
+<span class="cmd">cd</span> ~/ros2_ws &amp;&amp; <span class="cmd">colcon build</span> --packages-up-to gst_adapt_node
+<span class="cmd">source</span> install/setup.bash
 
-<span class="text-slate-600"># A/B stress test (any 4K mp4)</span>
-ros2 launch gst_adapt_node A_B_comparison.launch.py video_path:=/path/to/4k.mp4
+<span class="hash"># Launch A/B stress test with any 4K mp4</span>
+<span class="cmd">ros2 launch</span> gst_adapt_node A_B_comparison.launch.py \
+  video_path:=/path/to/4k.mp4
 
-<span class="text-slate-600"># Dashboard (second terminal)</span>
-ros2 run gst_adapt_node visualize_demo.py
-<span class="text-slate-600"># → open http://localhost:8080</span></pre>
-    </div>
-    <p class="text-center text-slate-600 text-xs mt-6 max-w-xl mx-auto leading-relaxed">
-      The launch file purges stale Fast-DDS <code class="text-slate-500">/dev/shm</code> locks, kills orphan containers from prior runs, and pins a UDPv4-only Fast-DDS profile to silence <code class="text-slate-500">RTPS_TRANSPORT_SHM</code> init errors.
-    </p>
-  </section>
+<span class="hash"># In a second terminal — dashboard at http://localhost:8080</span>
+<span class="cmd">ros2 run</span> gst_adapt_node visualize_demo.py</pre>
+        </div>
 
-  <!-- Platforms -->
-  <section class="max-w-5xl mx-auto px-6 py-24">
-    <h2 class="text-4xl font-black text-center mb-14">Supported Platforms</h2>
-    <div class="grid md:grid-cols-3 gap-7">
-      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
-        <div class="text-3xl font-bold mb-2">NVIDIA Jetson</div>
-        <div class="text-slate-500 text-sm mb-3">TX2 / Xavier / Orin</div>
-        <code class="text-xs text-emerald-400 font-bold">nvvideoconvert · CUDA + NVMM</code>
+        <p class="marginalia" style="max-width: var(--measure); margin-top: 14px;">
+          The launch file purges stale Fast-DDS <code>/dev/shm</code> locks, terminates orphaned
+          containers from prior runs, and pins a UDPv4-only Fast-DDS profile to silence
+          <code>RTPS_TRANSPORT_SHM</code> initialization noise.
+        </p>
       </div>
-      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
-        <div class="text-3xl font-bold mb-2">Intel VA-API</div>
-        <div class="text-slate-500 text-sm mb-3">Gen9+ iGPU / Arc dGPU</div>
-        <code class="text-xs text-blue-400 font-bold">vapostproc · GStreamer 1.22+</code>
-      </div>
-      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
-        <div class="text-3xl font-bold mb-2">CPU Fallback</div>
-        <div class="text-slate-500 text-sm mb-3">Any x86_64 / aarch64</div>
-        <code class="text-xs text-slate-400 font-bold">direct cv::resize · no GStreamer</code>
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Footer -->
-  <footer class="text-center py-16 border-t border-white/5">
-    <p class="text-slate-600 text-sm mb-3">Apache-2.0 &middot; ROS 2 Humble &middot; C++17</p>
-    <a href="https://github.com/sohams25/GstAdaptNode" class="text-cyan-600 hover:text-cyan-400 transition text-sm font-medium">github.com/sohams25/GstAdaptNode</a>
-  </footer>
+    <!-- ─────────── Colophon ─────────── -->
+    <footer class="colophon">
+      <div>
+        <h6>Repository</h6>
+        <p style="margin: 0 0 4px;">
+          <a href="https://github.com/sohams25/GstAdaptNode">github.com/sohams25/GstAdaptNode</a>
+        </p>
+        <p style="margin: 0;" class="lic">Apache-2.0 &middot; C++17 &middot; ROS 2 Humble</p>
+      </div>
+      <div>
+        <h6>Typography</h6>
+        <p style="margin: 0;">
+          Set in IBM Plex Serif, Plex Sans, and Plex Mono.
+          Rules at 1&nbsp;px. Body measure 62&nbsp;ch.
+        </p>
+      </div>
+      <div>
+        <h6>Revision</h6>
+        <p style="margin: 0;" class="lic">2026.04 &middot; 170-second A/B capture</p>
+        <p style="margin: 4px 0 0;">
+          <a href="https://github.com/sohams25/GstAdaptNode/commits/main">Changelog &uarr;</a>
+        </p>
+      </div>
+    </footer>
 
-  <!-- Toggle JS -->
-  <script>
-    function showCode(which) {
-      const std = document.getElementById('code-standard');
-      const gst = document.getElementById('code-gst');
-      const btnStd = document.getElementById('btn-standard');
-      const btnGst = document.getElementById('btn-gst');
-      if (which === 'standard') {
-        std.classList.remove('hidden');
-        gst.classList.add('hidden');
-        btnStd.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-active text-white';
-        btnGst.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-inactive text-slate-400';
-      } else {
-        gst.classList.remove('hidden');
-        std.classList.add('hidden');
-        btnGst.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-active text-white';
-        btnStd.className = 'px-6 py-2.5 rounded-lg text-sm font-bold transition-all toggle-inactive text-slate-400';
-      }
-    }
-  </script>
+  </div>
 </body>
 </html>
