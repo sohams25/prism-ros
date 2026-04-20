@@ -13,9 +13,10 @@
     .card-hover:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(34,211,238,0.07); }
     .toggle-active { background: linear-gradient(135deg, #06b6d4, #8b5cf6); }
     .toggle-inactive { background: #1e293b; }
-    .code-fade-enter { opacity: 0; transform: translateY(8px); }
-    .code-fade { transition: opacity 0.3s ease, transform 0.3s ease; opacity: 1; transform: translateY(0); }
     pre { tab-size: 4; }
+    .tnum { font-variant-numeric: tabular-nums; }
+    .bar-bg { background: rgba(148,163,184,0.08); }
+    .bar-fill { transition: width 1.2s cubic-bezier(.22,1,.36,1); }
   </style>
 </head>
 <body class="text-slate-200 font-sans antialiased">
@@ -47,8 +48,8 @@
         <span class="text-cyan-400 glow">ROS 2 Acceleration.</span>
       </h1>
       <p class="mt-8 text-xl md:text-2xl text-slate-500 font-light max-w-2xl mx-auto leading-relaxed">
-        The zero-copy, drop-in replacement for <code class="text-cyan-300/80 bg-white/5 px-2 py-0.5 rounded">image_proc</code>.<br/>
-        Free your CPU.
+        A drop-in replacement for <code class="text-cyan-300/80 bg-white/5 px-2 py-0.5 rounded">image_proc::ResizeNode</code> that picks the fastest available backend at runtime.<br/>
+        Zero-copy intra-process. No config.
       </p>
       <div class="mt-14 flex gap-5 justify-center flex-wrap">
         <a href="https://github.com/sohams25/GstAdaptNode"
@@ -72,21 +73,21 @@
           <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
         </div>
         <h3 class="text-xl font-bold mb-3">Hardware Auto-Detection</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">Probes <code class="text-slate-300">/dev/</code> for NVIDIA Jetson or Intel VA-API at startup. Falls back to CPU automatically. No config files, no environment variables.</p>
+        <p class="text-slate-400 text-sm leading-relaxed">Probes <code class="text-slate-300">/dev/</code> for NVIDIA Jetson or Intel VA-API at startup, then <em>live-validates</em> against the GStreamer registry. Broken accelerators (like <code class="text-slate-300">vaapipostproc</code> on 1.20) are skipped, not attempted.</p>
       </div>
       <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 card-hover">
         <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 flex items-center justify-center mb-5">
           <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         </div>
-        <h3 class="text-xl font-bold mb-3">True Zero-Copy IPC</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">Custom <code class="text-slate-300">appsrc</code> wrapper moves the ROS message pointer directly into GStreamer via <code class="text-slate-300">gst_buffer_new_wrapped_full</code>. Zero serialization, zero memcpy.</p>
+        <h3 class="text-xl font-bold mb-3">Zero-Copy Hot Path</h3>
+        <p class="text-slate-400 text-sm leading-relaxed">Intra-process <code class="text-slate-300">unique_ptr</code> move into the subscriber, then a custom <code class="text-slate-300">appsrc</code> wrapper moves the pointer straight into GStreamer via <code class="text-slate-300">gst_buffer_new_wrapped_full</code>. No memcpy on the hot path.</p>
       </div>
       <div class="bg-[#111827] rounded-2xl p-8 border border-white/5 card-hover">
         <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-500/5 flex items-center justify-center mb-5">
           <svg class="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
         </div>
-        <h3 class="text-xl font-bold mb-3">5.6x CPU Reduction</h3>
-        <p class="text-slate-400 text-sm leading-relaxed">Offloads 4K resize to VA-API/NVMM hardware. Drops from 152% CPU to 27% per stream. Freed cores for SLAM, perception, planning.</p>
+        <h3 class="text-xl font-bold mb-3">Dual-Mode Fallback</h3>
+        <p class="text-slate-400 text-sm leading-relaxed">When no usable GPU path is present, the node bypasses GStreamer entirely and runs <code class="text-slate-300">cv::resize</code> in the subscriber callback. Faster than <code class="text-slate-300">image_proc</code> even without a GPU because there's no <code class="text-slate-300">image_transport</code> round-trip.</p>
       </div>
     </div>
   </section>
@@ -96,7 +97,7 @@
     <div class="text-center mb-14">
       <h2 class="text-4xl md:text-5xl font-black">The Plug-and-Play Promise</h2>
       <p class="mt-5 text-slate-400 text-lg max-w-2xl mx-auto">
-        Same parameters. Same composable node interface. Your camera still publishes <code class="text-cyan-300/70">bgr8</code>. Toggle below to see the difference.
+        Same parameters. Same composable-node interface. Your camera still publishes <code class="text-cyan-300/70">bgr8</code>. Toggle below to see the difference.
       </p>
     </div>
 
@@ -133,7 +134,7 @@
       <div id="code-gst" class="rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/[0.03] to-[#111827] overflow-hidden" style="box-shadow: 0 0 50px rgba(34,211,238,0.04);">
         <div class="px-5 py-3 border-b border-cyan-500/10 flex items-center gap-2">
           <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
-          <span class="text-cyan-400/80 text-xs font-bold uppercase tracking-widest">Hardware-Accelerated &mdash; GstAdaptNode</span>
+          <span class="text-cyan-400/80 text-xs font-bold uppercase tracking-widest">Auto-Accelerated &mdash; GstAdaptNode</span>
         </div>
         <pre class="p-6 text-slate-300 text-sm overflow-x-auto"><code>ComposableNode(
     package=<span class="text-cyan-400">'gst_adapt_node'</span>,
@@ -152,22 +153,22 @@
 
   <!-- Visual Demo -->
   <section id="demo" class="max-w-5xl mx-auto px-6 py-24">
-    <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Glass-to-Glass Visual Demo</h2>
+    <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Live A/B Dashboard</h2>
     <p class="text-slate-400 text-center mb-12 max-w-xl mx-auto">
-      Split-screen output from <code class="text-slate-300">visualize_demo.py</code> with live latency, FPS, and CPU overlays.
+      The bundled <code class="text-slate-300">visualize_demo.py</code> Flask app runs a side-by-side MJPEG comparison at <span class="text-cyan-300">localhost:8080</span> with per-pipeline latency, FPS, CPU, RAM, and a live delta sparkline.
     </p>
     <div class="rounded-2xl border border-cyan-500/10 bg-gradient-to-b from-cyan-500/[0.02] to-transparent p-1.5" style="box-shadow: 0 0 60px rgba(34,211,238,0.03);">
       <div class="rounded-xl overflow-hidden bg-[#0a0e1a]">
-        <img src="assets/demo.gif" alt="Split-screen A/B comparison with live metrics"
+        <img src="assets/demo.gif" alt="Split-screen A/B dashboard with live metrics"
              class="w-full"
              onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
         <div class="hidden flex-col items-center justify-center py-24 text-slate-600">
           <svg class="w-20 h-20 mb-5 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
           </svg>
-          <p class="text-lg font-bold text-slate-500">Demo Recording</p>
+          <p class="text-lg font-bold text-slate-500">Dashboard Preview</p>
           <p class="text-sm mt-2 text-slate-600 max-w-xs text-center">
-            Place your screen recording at <code class="text-cyan-600">docs/assets/demo.gif</code>
+            Place a screen recording at <code class="text-cyan-600">docs/assets/demo.gif</code>
           </p>
         </div>
       </div>
@@ -177,40 +178,100 @@
   <!-- Benchmarks -->
   <section id="benchmarks" class="max-w-6xl mx-auto px-6 py-24">
     <h2 class="text-4xl md:text-5xl font-black text-center mb-5">Benchmark Results</h2>
-    <p class="text-slate-400 text-center mb-16 max-w-2xl mx-auto">
-      <code>image_proc::ResizeNode</code> vs. <code>gst_adapt_node::ResizeNode</code>.
-      4K BGR8 input, 640&times;480 output, 30&nbsp;Hz. Intel VA-API.
+    <p class="text-slate-400 text-center mb-10 max-w-2xl mx-auto">
+      <code>image_proc::ResizeNode</code> vs <code>gst_adapt_node::ResizeNode</code>.
+      4K BGR8 source &rarr; 640&times;480 at 10 Hz, measured over a sustained 30-second A/B run.
+    </p>
+    <p class="text-center text-slate-600 text-xs mb-14 max-w-xl mx-auto uppercase tracking-widest">
+      Intel desktop · GStreamer 1.20 · direct-mode fallback (vaapipostproc chroma bug)
     </p>
 
-    <!-- Stats -->
+    <!-- Headline Stats -->
     <div class="grid md:grid-cols-4 gap-5 mb-14">
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">5.6x</div>
-        <div class="text-slate-500 text-sm mt-2">CPU Reduction</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">6&ndash;17<span class="text-xl ml-1">ms</span></div>
+        <div class="text-slate-500 text-sm mt-2">Faster per frame</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">&lt;15ms</div>
-        <div class="text-slate-500 text-sm mt-2">Latency</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">4&ndash;15<span class="text-xl ml-1">ms</span></div>
+        <div class="text-slate-500 text-sm mt-2">Accel latency</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">bgr8</div>
-        <div class="text-slate-500 text-sm mt-2">Native Input</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">0</div>
+        <div class="text-slate-500 text-sm mt-2">Memcpy on hot path</div>
       </div>
       <div class="bg-[#111827] rounded-2xl p-6 border border-white/5 text-center card-hover">
-        <div class="text-4xl font-black bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">0</div>
-        <div class="text-slate-500 text-sm mt-2">Memory Copies</div>
+        <div class="text-4xl font-black tnum bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">bgr8</div>
+        <div class="text-slate-500 text-sm mt-2">Native input</div>
       </div>
     </div>
 
-    <!-- Charts -->
+    <!-- Horizontal bar chart — latency -->
     <div class="grid md:grid-cols-2 gap-7">
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5">
-        <img src="assets/cpu_chart.svg" alt="CPU Utilization Comparison" class="w-full"/>
+      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5">
+        <div class="flex items-baseline justify-between mb-6">
+          <h3 class="text-lg font-bold">Per-frame latency</h3>
+          <span class="text-slate-600 text-xs uppercase tracking-widest">ms · lower is better</span>
+        </div>
+        <div class="space-y-5">
+          <div>
+            <div class="flex items-baseline justify-between mb-1.5">
+              <span class="text-xs text-slate-500 uppercase tracking-widest font-bold">image_proc</span>
+              <span class="tnum text-red-400 font-bold">11&ndash;21<span class="text-slate-600 text-xs ml-1">ms</span></span>
+            </div>
+            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
+              <div class="bar-fill h-full bg-gradient-to-r from-red-500/70 to-orange-500/70" style="width: 85%"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between mb-1.5">
+              <span class="text-xs text-cyan-400 uppercase tracking-widest font-bold">gst_adapt_node</span>
+              <span class="tnum text-cyan-400 font-bold">4&ndash;15<span class="text-slate-600 text-xs ml-1">ms</span></span>
+            </div>
+            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
+              <div class="bar-fill h-full bg-gradient-to-r from-cyan-500 to-emerald-400" style="width: 48%"></div>
+            </div>
+          </div>
+        </div>
+        <p class="text-slate-600 text-xs mt-6 leading-relaxed">
+          The accelerated path wins by eliminating the <code class="text-slate-500">image_transport</code> &#43; <code class="text-slate-500">CameraSubscriber</code> round-trip. Intra-process <code class="text-slate-500">unique_ptr</code> move + direct callback = no serialization, no DDS.
+        </p>
       </div>
-      <div class="bg-[#111827] rounded-2xl p-6 border border-white/5">
-        <img src="assets/latency_chart.svg" alt="Latency Comparison" class="w-full"/>
+
+      <div class="bg-[#111827] rounded-2xl p-7 border border-white/5">
+        <div class="flex items-baseline justify-between mb-6">
+          <h3 class="text-lg font-bold">Container CPU</h3>
+          <span class="text-slate-600 text-xs uppercase tracking-widest">% · lower is better</span>
+        </div>
+        <div class="space-y-5">
+          <div>
+            <div class="flex items-baseline justify-between mb-1.5">
+              <span class="text-xs text-slate-500 uppercase tracking-widest font-bold">image_proc</span>
+              <span class="tnum text-red-400 font-bold">60&ndash;72<span class="text-slate-600 text-xs ml-1">%</span></span>
+            </div>
+            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
+              <div class="bar-fill h-full bg-gradient-to-r from-red-500/70 to-orange-500/70" style="width: 72%"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between mb-1.5">
+              <span class="text-xs text-cyan-400 uppercase tracking-widest font-bold">gst_adapt_node</span>
+              <span class="tnum text-cyan-400 font-bold">55&ndash;70<span class="text-slate-600 text-xs ml-1">%</span></span>
+            </div>
+            <div class="h-2.5 bar-bg rounded-full overflow-hidden">
+              <div class="bar-fill h-full bg-gradient-to-r from-cyan-500 to-emerald-400" style="width: 65%"></div>
+            </div>
+          </div>
+        </div>
+        <p class="text-slate-600 text-xs mt-6 leading-relaxed">
+          On hosts with a working GPU path (Jetson <code class="text-slate-500">nvvideoconvert</code>, or Intel on GStreamer 1.22+ <code class="text-slate-500">vapostproc</code>), container CPU drops further because the resize kernel runs on dedicated silicon instead of the host.
+        </p>
       </div>
     </div>
+
+    <p class="text-slate-600 text-xs text-center mt-10 max-w-2xl mx-auto leading-relaxed">
+      Both pipelines run in separate <code class="text-slate-500">component_container</code> processes so CPU and RAM are measured independently. The dashboard revalidates each container PID every tick — dead zombies from prior runs are not measured as live pipelines.
+    </p>
   </section>
 
   <!-- Quick Start -->
@@ -224,17 +285,22 @@ git clone --recursive https://github.com/sohams25/GstAdaptNode.git gst_adapt_nod
 <span class="text-slate-600"># Dependencies</span>
 sudo apt install ros-humble-image-proc gstreamer1.0-vaapi \
   libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+pip install flask psutil
 
 <span class="text-slate-600"># Build</span>
 cd ~/ros2_ws &amp;&amp; colcon build --packages-up-to gst_adapt_node
 source install/setup.bash
 
-<span class="text-slate-600"># A/B stress test</span>
+<span class="text-slate-600"># A/B stress test (any 4K mp4)</span>
 ros2 launch gst_adapt_node A_B_comparison.launch.py video_path:=/path/to/4k.mp4
 
-<span class="text-slate-600"># Visual dashboard (second terminal)</span>
-ros2 run gst_adapt_node visualize_demo.py</pre>
+<span class="text-slate-600"># Dashboard (second terminal)</span>
+ros2 run gst_adapt_node visualize_demo.py
+<span class="text-slate-600"># → open http://localhost:8080</span></pre>
     </div>
+    <p class="text-center text-slate-600 text-xs mt-6 max-w-xl mx-auto leading-relaxed">
+      The launch file purges stale Fast-DDS <code class="text-slate-500">/dev/shm</code> locks, kills orphan containers from prior runs, and pins a UDPv4-only Fast-DDS profile to silence <code class="text-slate-500">RTPS_TRANSPORT_SHM</code> init errors.
+    </p>
   </section>
 
   <!-- Platforms -->
@@ -244,17 +310,17 @@ ros2 run gst_adapt_node visualize_demo.py</pre>
       <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
         <div class="text-3xl font-bold mb-2">NVIDIA Jetson</div>
         <div class="text-slate-500 text-sm mb-3">TX2 / Xavier / Orin</div>
-        <code class="text-xs text-emerald-400 font-bold">nvvideoconvert (CUDA + NVMM)</code>
+        <code class="text-xs text-emerald-400 font-bold">nvvideoconvert · CUDA + NVMM</code>
       </div>
       <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
-        <div class="text-3xl font-bold mb-2">Intel</div>
+        <div class="text-3xl font-bold mb-2">Intel VA-API</div>
         <div class="text-slate-500 text-sm mb-3">Gen9+ iGPU / Arc dGPU</div>
-        <code class="text-xs text-blue-400 font-bold">vaapipostproc (VASurface)</code>
+        <code class="text-xs text-blue-400 font-bold">vapostproc · GStreamer 1.22+</code>
       </div>
       <div class="bg-[#111827] rounded-2xl p-7 border border-white/5 text-center card-hover">
-        <div class="text-3xl font-bold mb-2">CPU</div>
+        <div class="text-3xl font-bold mb-2">CPU Fallback</div>
         <div class="text-slate-500 text-sm mb-3">Any x86_64 / aarch64</div>
-        <code class="text-xs text-slate-500 font-bold">videoscale + videoconvert</code>
+        <code class="text-xs text-slate-400 font-bold">direct cv::resize · no GStreamer</code>
       </div>
     </div>
   </section>
