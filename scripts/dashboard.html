@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440,initial-scale=1" />
+  <title>GstAdaptNode · A/B Benchmark</title>
+  <meta name="description" content="Side-by-side ROS 2 pipeline benchmark — image_proc vs gst_adapt_node." />
+
+  <!-- Fonts: Geist (sans) + Geist Mono. JetBrains Mono as fallback. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Tailwind Play CDN.
+       Note: Tailwind prints a one-time "should not be used in production" warning.
+       That's a runtime notice from the Play CDN, not an error; nothing is broken.
+       Ship a compiled Tailwind build if you want it silenced. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0A0B0D',
+            surface: '#111316',
+            'surface-2': '#17191D',
+            border: '#1F2328',
+            'border-strong': '#2A2F36',
+            text: { DEFAULT: '#E6E8EC', muted: '#8B9199', dim: '#5A6069' },
+            accent: '#F5A524',
+            'accent-cool': '#4F9CF9',
+            good: '#22C55E',
+            warn: '#F59E0B',
+            bad: '#EF4444',
+          },
+          fontFamily: {
+            sans: ['Geist', 'Inter Tight', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['"Geist Mono"', '"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          borderRadius: { sm: '4px', md: '6px', lg: '8px' },
+          letterSpacing: { caps: '0.08em' },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root {
+      --bg: #0a0b0d;
+      --surface: #111316;
+      --surface-2: #17191d;
+      --border: #1f2328;
+      --border-strong: #2a2f36;
+      --text: #e6e8ec;
+      --text-muted: #8b9199;
+      --text-dim: #5a6069;
+      --accent: #f5a524;
+      --accent-cool: #4f9cf9;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --dur-fast: 180ms;
+      --dur-med: 300ms;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-feature-settings: "ss01", "cv11";
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Atmosphere — a faint top-lit dot matrix. No decoration, just depth. */
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0);
+      background-size: 24px 24px;
+      mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 70%);
+    }
+    main { position: relative; z-index: 1; }
+
+    /* Numbers: tabular + crossfade on change. */
+    .num {
+      font-variant-numeric: tabular-nums;
+      transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+    }
+    .num.is-fading { opacity: 0.15; }
+
+    /* Proper minus glyph — monoglyphic width, matches mono metrics. */
+    .neg::before { content: "−"; }
+
+    /* Caps labels — the one piece of decorative typography we allow. */
+    .cap {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+
+    /* LIVE pill pulse */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.5; transform: scale(0.85); }
+    }
+    .pulse-dot { animation: pulse-dot 1.6s var(--ease) infinite; }
+
+    /* Status dot */
+    .dot {
+      width: 6px; height: 6px; border-radius: 999px;
+      background: var(--text-dim); display: inline-block; vertical-align: middle;
+      transition: background var(--dur-med) var(--ease);
+    }
+    .dot[data-level="good"] { background: var(--good); }
+    .dot[data-level="warn"] { background: var(--warn); }
+    .dot[data-level="bad"]  { background: var(--bad);  }
+
+    /* Focus ring — keyboard only, amber */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    /* Video stream */
+    .stream {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .stream.is-hidden { visibility: hidden; }
+
+    /* Offline / preview overlay */
+    .offline {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-dim);
+    }
+    .offline-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(0deg, transparent 49.5%, rgba(255,255,255,0.025) 49.5%, rgba(255,255,255,0.025) 50.5%, transparent 50.5%),
+        linear-gradient(90deg, transparent 49.5%, rgba(255,255,255,0.025) 49.5%, rgba(255,255,255,0.025) 50.5%, transparent 50.5%);
+      background-size: 20px 20px;
+    }
+    .offline-inner {
+      position: relative; text-align: center;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+
+    /* Sparkline */
+    .spark { display: block; height: 22px; }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      .num { transition: none; }
+      .pulse-dot { animation: none; }
+      * { transition-duration: 0ms !important; }
+    }
+
+    /* Lock layout on reasonable widths so no scroll ever appears */
+    @media (min-width: 1280px) {
+      body { overflow: hidden; }
+    }
+
+    /* Truncation helper inside flex rows */
+    .truncate-min { min-width: 0; }
+  </style>
+</head>
+
+<body class="font-sans antialiased">
+  <main class="h-screen max-w-[1440px] mx-auto px-6 py-4 flex flex-col gap-3">
+
+    <!-- ─────────── HEADER ─────────── -->
+    <header class="shrink-0 h-12 flex items-center justify-between px-4 rounded-lg bg-surface border border-border">
+      <div class="flex items-center gap-4 truncate-min">
+        <div class="flex items-center gap-2.5 shrink-0">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <rect x="1" y="1" width="7" height="7" rx="1" stroke="#5A6069" stroke-width="1.2"/>
+            <rect x="10" y="1" width="7" height="7" rx="1" fill="#F5A524"/>
+            <rect x="1" y="10" width="7" height="7" rx="1" fill="#4F9CF9" fill-opacity="0.35"/>
+            <rect x="10" y="10" width="7" height="7" rx="1" stroke="#5A6069" stroke-width="1.2"/>
+          </svg>
+          <span class="font-mono text-[13px] font-medium tracking-tight">GstAdaptNode</span>
+        </div>
+        <span class="text-text-dim text-[11px] shrink-0">/</span>
+        <span class="text-text-muted text-[12px] truncate">Hardware-agnostic ROS 2 perception acceleration</span>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <span id="statusPill" class="inline-flex items-center gap-1.5 h-6 pl-2 pr-2.5 rounded-sm border border-border-strong bg-surface-2" aria-live="polite">
+          <span id="statusDot" class="pulse-dot inline-block w-1.5 h-1.5 rounded-full bg-good"></span>
+          <span id="statusText" class="font-mono text-[10px] tracking-caps text-text">LIVE</span>
+        </span>
+
+        <span id="hwBadge" class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-sm border border-border-strong bg-surface-2">
+          <svg id="hwBadgeDot" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><circle cx="4.5" cy="4.5" r="3.5" fill="#4F9CF9"/></svg>
+          <span id="hwBadgeText" class="font-mono text-[10px] tracking-caps text-text-muted">Detecting hardware…</span>
+        </span>
+
+        <span class="hidden lg:inline-flex items-center gap-1 h-6 px-2 text-text-dim">
+          <kbd class="font-mono text-[10px] px-1.5 py-0.5 border border-border rounded-sm">R</kbd>
+          <span class="text-[10px] tracking-caps">reconnect</span>
+        </span>
+      </div>
+    </header>
+
+    <!-- ─────────── HERO DELTA CARD ─────────── -->
+    <section class="shrink-0 rounded-lg bg-surface border border-border overflow-hidden">
+      <div class="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] h-[136px] divide-x divide-border">
+
+        <!-- Delta -->
+        <div class="px-6 py-4 flex flex-col justify-between truncate-min">
+          <div class="cap" id="deltaLabel">Accelerated is faster by</div>
+          <div class="flex items-baseline gap-3">
+            <span class="font-mono text-accent leading-none tabular-nums" style="font-size: 68px; font-weight: 500;">
+              <span id="deltaSign"></span><span id="deltaNum" class="num">13.1</span>
+            </span>
+            <span class="font-mono text-text-muted text-[18px] leading-none">ms</span>
+          </div>
+          <div class="flex items-center gap-3 truncate-min">
+            <span id="deltaSubtitle" class="text-text-muted text-[11px] truncate">per frame · direct-mode</span>
+            <svg class="spark text-accent shrink-0" style="width: 120px;" viewBox="0 0 140 22" preserveAspectRatio="none" aria-hidden="true">
+              <polyline id="deltaSpark" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" points=""/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Legacy summary -->
+        <div class="px-6 py-4 flex flex-col justify-between truncate-min">
+          <div class="cap" style="color: var(--accent-cool);">Legacy</div>
+          <div class="flex items-baseline gap-2">
+            <span id="llHero" class="num font-mono text-[28px] text-text tabular-nums leading-none">18.9</span>
+            <span class="font-mono text-text-muted text-[13px]">ms</span>
+          </div>
+          <div class="text-text-dim text-[11px] font-mono truncate">image_proc::ResizeNode</div>
+        </div>
+
+        <!-- Accelerated summary -->
+        <div class="px-6 py-4 flex flex-col justify-between truncate-min">
+          <div class="cap" style="color: var(--accent);">Accelerated</div>
+          <div class="flex items-baseline gap-2">
+            <span id="alHero" class="num font-mono text-[28px] text-text tabular-nums leading-none">5.8</span>
+            <span class="font-mono text-text-muted text-[13px]">ms</span>
+          </div>
+          <div class="text-text-dim text-[11px] font-mono truncate">gst_adapt_node::ResizeNode</div>
+        </div>
+
+        <!-- Reduction % -->
+        <div class="px-6 py-4 flex flex-col justify-between truncate-min">
+          <div class="cap">Latency reduction</div>
+          <div class="flex items-baseline gap-2">
+            <span id="reductionPct" class="num font-mono text-[28px] text-text tabular-nums leading-none">69</span>
+            <span class="font-mono text-text-muted text-[13px]">%</span>
+          </div>
+          <div class="text-text-dim text-[11px] truncate">at 10 Hz · 4K → 640×480</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────── VIDEO PANELS ─────────── -->
+    <section class="flex-1 min-h-0 grid grid-cols-2 gap-3">
+
+      <!-- Legacy -->
+      <div class="rounded-lg bg-surface border border-border flex flex-col overflow-hidden">
+        <div class="shrink-0 px-4 pt-2.5 pb-2" style="box-shadow: inset 0 -1px 0 0 var(--border);">
+          <div class="flex items-baseline justify-between gap-3 truncate-min">
+            <div class="flex items-baseline gap-2.5 truncate-min">
+              <span class="cap shrink-0" style="color: var(--accent-cool);">Legacy</span>
+              <span class="font-mono text-[12px] text-text truncate">image_proc::ResizeNode</span>
+            </div>
+            <span class="font-mono text-[10px] text-text-dim tracking-caps uppercase shrink-0">CPU-bound</span>
+          </div>
+          <div class="font-mono text-[10px] text-text-dim mt-1 truncate">
+            image_transport + CameraSubscriber · DDS round-trip
+          </div>
+        </div>
+        <div class="relative flex-1 min-h-0 bg-surface-2">
+          <img id="legacyStream" class="stream" alt="Legacy pipeline MJPEG stream" />
+          <div id="legacyOffline" class="offline" hidden>
+            <div class="offline-grid"></div>
+            <div class="offline-inner">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M2 3l20 18M21 9a12 12 0 0 0-5-3.6M3 9a12 12 0 0 1 2.5-2.1M6 13a7.5 7.5 0 0 1 4-2.3M9 16.5a3.5 3.5 0 0 1 4 .8" stroke="#5A6069" stroke-width="1.4" stroke-linecap="round"/>
+                <circle cx="12" cy="19.5" r="1.2" fill="#5A6069"/>
+              </svg>
+              <div class="cap">No signal</div>
+              <div class="font-mono text-[10px] text-text-dim">/stream/legacy</div>
+            </div>
+          </div>
+          <div id="legacyOverlay" class="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-text-muted">
+            <span><span id="lfOverlay" class="num text-text">10.0</span> fps</span>
+            <span class="text-text-dim">3840×2160 → 640×480</span>
+            <span><span id="llOverlay" class="num text-text">18.9</span> ms</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accelerated -->
+      <div class="rounded-lg bg-surface border border-border flex flex-col overflow-hidden">
+        <div class="shrink-0 px-4 pt-2.5 pb-2" style="box-shadow: inset 0 -1px 0 0 var(--border);">
+          <div class="flex items-baseline justify-between gap-3 truncate-min">
+            <div class="flex items-baseline gap-2.5 truncate-min">
+              <span class="cap shrink-0" style="color: var(--accent);">Accelerated</span>
+              <span class="font-mono text-[12px] text-text truncate">gst_adapt_node::ResizeNode</span>
+            </div>
+            <span id="accTierLabel" class="font-mono text-[10px] text-text-dim tracking-caps uppercase shrink-0">Direct mode</span>
+          </div>
+          <div id="accArchLabel" class="font-mono text-[10px] text-text-dim mt-1 truncate">
+            Zero-copy intra-process · cv::resize in callback
+          </div>
+        </div>
+        <div class="relative flex-1 min-h-0 bg-surface-2">
+          <img id="accelStream" class="stream" alt="Accelerated pipeline MJPEG stream" />
+          <div id="accelOffline" class="offline" hidden>
+            <div class="offline-grid"></div>
+            <div class="offline-inner">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M2 3l20 18M21 9a12 12 0 0 0-5-3.6M3 9a12 12 0 0 1 2.5-2.1M6 13a7.5 7.5 0 0 1 4-2.3M9 16.5a3.5 3.5 0 0 1 4 .8" stroke="#5A6069" stroke-width="1.4" stroke-linecap="round"/>
+                <circle cx="12" cy="19.5" r="1.2" fill="#5A6069"/>
+              </svg>
+              <div class="cap">No signal</div>
+              <div class="font-mono text-[10px] text-text-dim">/stream/accelerated</div>
+            </div>
+          </div>
+          <div id="accelOverlay" class="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-text-muted">
+            <span><span id="afOverlay" class="num text-text">10.0</span> fps</span>
+            <span class="text-text-dim">3840×2160 → 640×480</span>
+            <span><span id="alOverlay" class="num text-text">5.8</span> ms</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────── KPI GRID ─────────── -->
+    <section class="shrink-0 rounded-lg bg-surface border border-border overflow-hidden">
+      <div class="grid grid-cols-4 divide-x divide-border">
+        <!-- LATENCY -->
+        <div class="px-5 py-3">
+          <div class="flex items-baseline justify-between mb-2">
+            <span class="cap">Latency</span>
+            <span class="text-text-dim font-mono" style="font-size: 9px; letter-spacing: 0.05em;">ms · target ≤ 10</span>
+          </div>
+          <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 items-baseline">
+            <span class="text-text-dim text-[11px] font-mono">legacy</span>
+            <span id="llKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="latency">18.9</span>
+            <span id="llDot" class="dot" data-level="warn"></span>
+
+            <span class="text-text-dim text-[11px] font-mono">accel</span>
+            <span id="alKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="latency">5.8</span>
+            <span id="alDot" class="dot" data-level="good"></span>
+          </div>
+        </div>
+
+        <!-- FPS -->
+        <div class="px-5 py-3">
+          <div class="flex items-baseline justify-between mb-2">
+            <span class="cap">Frames per second</span>
+            <span class="text-text-dim font-mono" style="font-size: 9px; letter-spacing: 0.05em;">fps · target 10</span>
+          </div>
+          <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 items-baseline">
+            <span class="text-text-dim text-[11px] font-mono">legacy</span>
+            <span id="lfKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="fps">10.0</span>
+            <span id="lfDot" class="dot" data-level="good"></span>
+
+            <span class="text-text-dim text-[11px] font-mono">accel</span>
+            <span id="afKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="fps">10.0</span>
+            <span id="afDot" class="dot" data-level="good"></span>
+          </div>
+        </div>
+
+        <!-- CPU -->
+        <div class="px-5 py-3">
+          <div class="flex items-baseline justify-between mb-2">
+            <span class="cap">Container CPU</span>
+            <span class="text-text-dim font-mono" style="font-size: 9px; letter-spacing: 0.05em;">% · per-container</span>
+          </div>
+          <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 items-baseline">
+            <span class="text-text-dim text-[11px] font-mono">legacy</span>
+            <span id="lcKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="cpu">54</span>
+            <span id="lcDot" class="dot" data-level="warn"></span>
+
+            <span class="text-text-dim text-[11px] font-mono">accel</span>
+            <span id="acKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="cpu">49</span>
+            <span id="acDot" class="dot" data-level="warn"></span>
+          </div>
+        </div>
+
+        <!-- RAM -->
+        <div class="px-5 py-3">
+          <div class="flex items-baseline justify-between mb-2">
+            <span class="cap">Container RAM</span>
+            <span class="text-text-dim font-mono" style="font-size: 9px; letter-spacing: 0.05em;">MB · RSS</span>
+          </div>
+          <div class="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 items-baseline">
+            <span class="text-text-dim text-[11px] font-mono">legacy</span>
+            <span id="lrKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="ram">805</span>
+            <span id="lrDot" class="dot" data-level="warn"></span>
+
+            <span class="text-text-dim text-[11px] font-mono">accel</span>
+            <span id="arKpi" class="num font-mono text-[18px] tabular-nums justify-self-end" data-metric="ram">773</span>
+            <span id="arDot" class="dot" data-level="warn"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────── FOOTER ─────────── -->
+    <footer class="shrink-0 h-9 flex items-center justify-between px-4 rounded-lg bg-surface border border-border">
+      <div class="flex items-center gap-4 text-[11px] font-mono text-text-muted truncate-min">
+        <a href="https://github.com/sohams25/GstAdaptNode" target="_blank" rel="noopener" class="hover:text-text transition-colors inline-flex items-center gap-1.5 truncate">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="shrink-0">
+            <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.22.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.77-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.11 0 0 .67-.22 2.2.82a7.66 7.66 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.91.08 2.11.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.74.54 1.49v2.21c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
+          </svg>
+          <span class="truncate">sohams25/GstAdaptNode</span>
+        </a>
+        <span class="text-text-dim shrink-0">·</span>
+        <span class="shrink-0">Apache-2.0</span>
+      </div>
+      <div class="flex items-center gap-3 text-[11px] font-mono shrink-0">
+        <span class="inline-flex items-center gap-1.5 text-text-muted">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent-cool inline-block"></span>
+          ROS 2 Humble
+        </span>
+        <span class="inline-flex items-center gap-1.5 text-text-muted">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent inline-block"></span>
+          GStreamer 1.x
+        </span>
+        <span class="text-text-dim" id="ts">—</span>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    'use strict';
+
+    // ─────────── Config ───────────
+    const POLL_INTERVAL_MS = 1000;
+    const SPARK_WINDOW = 30;
+    const STREAM_LEGACY  = '/stream/legacy';
+    const STREAM_ACCEL   = '/stream/accelerated';
+    const ENDPOINT_STATS  = '/api/stats';
+    const ENDPOINT_SYSTEM = '/api/system';
+    const STREAM_MAX_ATTEMPTS = 4; // cap retries; press R for manual reconnect
+
+    // Protocol detection — when opened directly as a file, skip all network I/O.
+    const IS_FILE = typeof location !== 'undefined' && location.protocol === 'file:';
+    const CAN_FETCH = !IS_FILE;
+
+    // Threshold rules
+    const THRESHOLDS = {
+      latency: v => v <= 8 ? 'good' : v <= 15 ? 'warn' : 'bad',
+      fps:     v => v >= 9.5 ? 'good' : v >= 8 ? 'warn' : 'bad',
+      cpu:     v => v < 40 ? 'good' : v < 70 ? 'warn' : 'bad',
+      ram:     v => v < 500 ? 'good' : v < 1000 ? 'warn' : 'bad',
+    };
+
+    // Hardware variant → badge + hero copy + arch labels
+    const HW_VARIANTS = {
+      'nvidia-jetson': {
+        dotColor: '#76FF03',
+        label: 'NVIDIA Jetson · NVMM · GPU pipeline',
+        tierShort: 'GPU pipeline',
+        archLabel: 'Zero-copy intra-process · GStreamer nvvideoconvert',
+        heroSubtitle: 'faster per frame · GPU offload on dedicated silicon',
+      },
+      'intel-vaapi': {
+        dotColor: '#F5A524',
+        label: 'Intel VA-API · vapostproc · GPU pipeline',
+        tierShort: 'GPU pipeline',
+        archLabel: 'Zero-copy intra-process · GStreamer vapostproc',
+        heroSubtitle: 'faster per frame · VA-API hardware offload',
+      },
+      'cpu': {
+        dotColor: '#4F9CF9',
+        label: 'CPU fallback · direct cv::resize',
+        tierShort: 'Direct mode',
+        archLabel: 'Zero-copy intra-process · cv::resize in callback',
+        heroSubtitle: 'faster per frame · GStreamer overhead eliminated',
+      },
+    };
+
+    // ─────────── Refs ───────────
+    const $ = id => document.getElementById(id);
+    const refs = {
+      deltaNum: $('deltaNum'),
+      deltaSign: $('deltaSign'),
+      deltaLabel: $('deltaLabel'),
+      deltaSubtitle: $('deltaSubtitle'),
+      deltaSpark: $('deltaSpark'),
+      reductionPct: $('reductionPct'),
+
+      llHero: $('llHero'),
+      alHero: $('alHero'),
+      llOverlay: $('llOverlay'), alOverlay: $('alOverlay'),
+      lfOverlay: $('lfOverlay'), afOverlay: $('afOverlay'),
+
+      ll: $('llKpi'), lf: $('lfKpi'), lc: $('lcKpi'), lr: $('lrKpi'),
+      al: $('alKpi'), af: $('afKpi'), ac: $('acKpi'), ar: $('arKpi'),
+      llDot: $('llDot'), lfDot: $('lfDot'), lcDot: $('lcDot'), lrDot: $('lrDot'),
+      alDot: $('alDot'), afDot: $('afDot'), acDot: $('acDot'), arDot: $('arDot'),
+
+      legacyStream: $('legacyStream'),
+      accelStream: $('accelStream'),
+      legacyOffline: $('legacyOffline'),
+      accelOffline: $('accelOffline'),
+      legacyOverlay: $('legacyOverlay'),
+      accelOverlay: $('accelOverlay'),
+      accArchLabel: $('accArchLabel'),
+      accTierLabel: $('accTierLabel'),
+
+      hwBadgeText: $('hwBadgeText'),
+      hwBadgeDot: $('hwBadgeDot'),
+      statusPill: $('statusPill'),
+      statusText: $('statusText'),
+      statusDot: $('statusDot'),
+      ts: $('ts'),
+    };
+
+    // ─────────── Helpers ───────────
+    const fmt = (v, d = 1) => (v == null || Number.isNaN(Number(v))) ? '—' : Number(v).toFixed(d);
+    const fmtInt = v => (v == null || Number.isNaN(Number(v))) ? '—' : String(Math.round(Number(v)));
+
+    function setNum(el, newText) {
+      if (!el || el.textContent === newText) return;
+      el.classList.add('is-fading');
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          el.textContent = newText;
+          el.classList.remove('is-fading');
+        }, 90);
+      });
+    }
+
+    function setLevel(dotEl, numEl, level) {
+      if (dotEl) dotEl.dataset.level = level;
+      if (numEl) numEl.style.color = level === 'bad' ? 'var(--bad)' : 'var(--text)';
+    }
+
+    // ─────────── Status pill ───────────
+    function setStatus(mode) {
+      if (mode === 'preview') {
+        refs.statusText.textContent = 'PREVIEW';
+        refs.statusDot.classList.remove('pulse-dot', 'bg-good');
+        refs.statusDot.classList.add('bg-accent');
+      } else {
+        refs.statusText.textContent = 'LIVE';
+        refs.statusDot.classList.remove('bg-accent');
+        refs.statusDot.classList.add('pulse-dot', 'bg-good');
+      }
+    }
+
+    // ─────────── Sparkline ───────────
+    const deltaHistory = [];
+    function pushDelta(d) {
+      deltaHistory.push(d);
+      if (deltaHistory.length > SPARK_WINDOW) deltaHistory.shift();
+      if (deltaHistory.length < 2) { refs.deltaSpark.setAttribute('points', ''); return; }
+      const min = Math.min(...deltaHistory);
+      const max = Math.max(...deltaHistory);
+      const span = Math.max(1e-6, max - min);
+      const W = 140, H = 20, PAD = 1;
+      const pts = deltaHistory.map((v, i) => {
+        const x = (i / (SPARK_WINDOW - 1)) * W;
+        const y = H - PAD - ((v - min) / span) * (H - PAD * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      refs.deltaSpark.setAttribute('points', pts);
+    }
+
+    // ─────────── Apply stats ───────────
+    function applyStats(s) {
+      const diff = (Number(s.ll) || 0) - (Number(s.al) || 0);
+      const accelFaster = diff >= 0;
+      setNum(refs.deltaNum, fmt(Math.abs(diff), 1));
+      refs.deltaSign.textContent = accelFaster ? '+' : '\u2212';
+      refs.deltaLabel.textContent = accelFaster ? 'Accelerated is faster by' : 'Legacy is faster by';
+      const reduction = s.ll > 0 ? (100 * diff / s.ll) : 0;
+      setNum(refs.reductionPct, fmtInt(Math.max(0, reduction)));
+
+      setNum(refs.llHero, fmt(s.ll, 1));
+      setNum(refs.alHero, fmt(s.al, 1));
+
+      setNum(refs.llOverlay, fmt(s.ll, 1));
+      setNum(refs.alOverlay, fmt(s.al, 1));
+      setNum(refs.lfOverlay, fmt(s.lf, 1));
+      setNum(refs.afOverlay, fmt(s.af, 1));
+
+      setNum(refs.ll, fmt(s.ll, 1));  setLevel(refs.llDot, refs.ll, THRESHOLDS.latency(s.ll));
+      setNum(refs.al, fmt(s.al, 1));  setLevel(refs.alDot, refs.al, THRESHOLDS.latency(s.al));
+      setNum(refs.lf, fmt(s.lf, 1));  setLevel(refs.lfDot, refs.lf, THRESHOLDS.fps(s.lf));
+      setNum(refs.af, fmt(s.af, 1));  setLevel(refs.afDot, refs.af, THRESHOLDS.fps(s.af));
+      setNum(refs.lc, fmtInt(s.lc));  setLevel(refs.lcDot, refs.lc, THRESHOLDS.cpu(s.lc));
+      setNum(refs.ac, fmtInt(s.ac));  setLevel(refs.acDot, refs.ac, THRESHOLDS.cpu(s.ac));
+      setNum(refs.lr, fmtInt(s.lr));  setLevel(refs.lrDot, refs.lr, THRESHOLDS.ram(s.lr));
+      setNum(refs.ar, fmtInt(s.ar));  setLevel(refs.arDot, refs.ar, THRESHOLDS.ram(s.ar));
+
+      pushDelta(s.d);
+
+      refs.ts.textContent = new Date().toTimeString().slice(0, 8);
+    }
+
+    // ─────────── Hardware variant ───────────
+    function applyHardware(variant) {
+      const v = HW_VARIANTS[variant] || HW_VARIANTS['cpu'];
+      refs.hwBadgeText.textContent = v.label;
+      const c = refs.hwBadgeDot.querySelector('circle');
+      if (c) c.setAttribute('fill', v.dotColor);
+      refs.accArchLabel.textContent = v.archLabel;
+      refs.accTierLabel.textContent = v.tierShort;
+      refs.deltaSubtitle.textContent = v.heroSubtitle;
+    }
+
+    async function fetchSystem() {
+      if (!CAN_FETCH) { applyHardware('cpu'); return; }
+      try {
+        const r = await fetch(ENDPOINT_SYSTEM, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        applyHardware(j.hw || 'cpu');
+      } catch {
+        applyHardware('cpu');
+      }
+    }
+
+    // ─────────── Stats loop ───────────
+    let useMock = false;
+    let mockStartedAt = 0;
+    let warnedOnce = false;
+
+    async function fetchStats() {
+      if (!CAN_FETCH || useMock) return applyStats(mockStats());
+      try {
+        const r = await fetch(ENDPOINT_STATS, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        applyStats(j);
+        if (useMock) { useMock = false; setStatus('live'); }
+      } catch (e) {
+        if (!useMock) {
+          useMock = true;
+          mockStartedAt = performance.now();
+          setStatus('preview');
+          if (!warnedOnce) {
+            warnedOnce = true;
+            console.info('[dashboard] /api/stats unreachable — running on synthesized preview data.');
+          }
+        }
+        applyStats(mockStats());
+      }
+    }
+
+    // Mock driven by the repo's measured ranges (legacy 10–16 ms, accel 3–13 ms).
+    function mockStats() {
+      const t = (performance.now() - mockStartedAt) / 1000;
+      const n1 = 0.5 * Math.sin(t * 0.7) + 0.5 * Math.sin(t * 0.23 + 1.3);
+      const n2 = 0.5 * Math.sin(t * 0.9 + 0.6) + 0.3 * Math.sin(t * 0.4);
+      const ll = 13.0 + 3.2 * n1;
+      const al = 7.5  + 3.0 * n2;
+      const lf = 10 + 0.1 * Math.sin(t * 1.1);
+      const af = 10 + 0.08 * Math.sin(t * 1.5);
+      const lc = 52 + 4 * n1;
+      const ac = 47 + 3 * n2;
+      const lr = 800 + 12 * Math.sin(t * 0.3);
+      const ar = 770 + 10 * Math.sin(t * 0.4 + 1);
+      return { ll, al, lf, af, lc, ac, lr, ar, d: ll - al };
+    }
+
+    // ─────────── MJPEG streams ───────────
+    function attachStream(imgEl, offlineEl, overlayEl, url) {
+      // Skip entirely when loaded as a file — no server to request from.
+      if (!CAN_FETCH) {
+        imgEl.classList.add('is-hidden');
+        offlineEl.hidden = false;
+        overlayEl.style.display = 'none';
+        return;
+      }
+
+      let attempts = 0;
+      let retryTimer = 0;
+      const cachebuster = () => `${url}?t=${Date.now()}`;
+
+      const showOffline = () => {
+        imgEl.classList.add('is-hidden');
+        offlineEl.hidden = false;
+        overlayEl.style.display = 'none';
+      };
+      const hideOffline = () => {
+        imgEl.classList.remove('is-hidden');
+        offlineEl.hidden = true;
+        overlayEl.style.display = '';
+      };
+
+      imgEl.addEventListener('error', () => {
+        attempts += 1;
+        showOffline();
+        if (attempts >= STREAM_MAX_ATTEMPTS) return;
+        const backoff = Math.min(500 * Math.pow(1.6, attempts), 4000);
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => { imgEl.src = cachebuster(); }, backoff);
+      });
+
+      imgEl.addEventListener('load', () => {
+        attempts = 0;
+        hideOffline();
+      });
+
+      imgEl._reconnect = () => { attempts = 0; imgEl.src = cachebuster(); };
+      imgEl.src = cachebuster();
+    }
+
+    // ─────────── Keyboard: R ───────────
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'r' || e.key === 'R') {
+        if (refs.legacyStream._reconnect) refs.legacyStream._reconnect();
+        if (refs.accelStream._reconnect)  refs.accelStream._reconnect();
+      }
+    });
+
+    // ─────────── Boot ───────────
+    function boot() {
+      if (!CAN_FETCH) {
+        mockStartedAt = performance.now();
+        useMock = true;
+        setStatus('preview');
+      }
+      fetchSystem();
+      attachStream(refs.legacyStream, refs.legacyOffline, refs.legacyOverlay, STREAM_LEGACY);
+      attachStream(refs.accelStream,  refs.accelOffline,  refs.accelOverlay,  STREAM_ACCEL);
+      fetchStats();
+      setInterval(fetchStats, POLL_INTERVAL_MS);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot);
+    } else {
+      boot();
+    }
+  </script>
+</body>
+</html>

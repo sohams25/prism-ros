@@ -4,7 +4,7 @@ GstAdaptNode A/B Web Dashboard.
 Two-container architecture: tracks legacy_container and accel_container CPU independently.
 """
 
-import json, logging, os, signal, subprocess, threading, time, warnings
+import glob, json, logging, os, shutil, signal, subprocess, threading, time, warnings
 import cv2, numpy as np, psutil, rclpy
 from flask import Flask, Response
 from rclpy.executors import SingleThreadedExecutor
@@ -14,14 +14,33 @@ from rclpy.time import Time
 from sensor_msgs.msg import Image
 
 PORT = 8080
-JQ = [cv2.IMWRITE_JPEG_QUALITY, 60]
-SW, SH = 320, 240
+JQ = [cv2.IMWRITE_JPEG_QUALITY, 78]
+SW, SH = 640, 480
+HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard.html')
+
+
+def detect_hardware():
+    if glob.glob('/dev/nvhost-*') or os.path.exists('/dev/nvmap'):
+        return 'nvidia-jetson'
+    if glob.glob('/dev/dri/renderD*') and shutil.which('gst-inspect-1.0'):
+        try:
+            out = subprocess.run(
+                ['gst-inspect-1.0', 'vapostproc'],
+                capture_output=True, timeout=2,
+            )
+            if out.returncode == 0:
+                return 'intel-vaapi'
+        except Exception:
+            pass
+    return 'cpu'
 
 
 class DashNode(Node):
     def __init__(self):
         super().__init__('visualize_demo')
-        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT,
+        # RELIABLE to match publishers (image_proc and gst_adapt_node default).
+        # depth=2 keeps the dashboard snappy without queueing old frames.
+        qos = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST)
         self.create_subscription(Image, '/legacy/image_processed', self._on_l, qos)
         self.create_subscription(Image, '/accelerated/image_processed', self._on_a, qos)
@@ -53,7 +72,8 @@ class DashNode(Node):
                              cv2.COLOR_RGB2BGR)
         else:
             return None
-        _, b = cv2.imencode('.jpg', cv2.resize(f, (SW, SH)), JQ)
+        out = f if (msg.width == SW and msg.height == SH) else cv2.resize(f, (SW, SH))
+        _, b = cv2.imencode('.jpg', out, JQ)
         return b.tobytes()
 
     def _lat(self, m):
@@ -80,22 +100,38 @@ class DashNode(Node):
     def _find(self, name):
         for p in psutil.process_iter(['pid', 'cmdline']):
             try:
-                if 'component_container' in ' '.join(p.info['cmdline'] or []) and name in ' '.join(p.info['cmdline'] or []):
+                cmd = ' '.join(p.info['cmdline'] or [])
+                if 'component_container' in cmd and name in cmd:
                     p.cpu_percent(); return p
             except Exception: pass
         return None
 
-    def _stats(self):
+    def _validate(self, p, name):
+        """Ensure cached Process still exists and matches the expected container.
+        Guards against PID reuse and silently-dead containers from prior launches."""
+        if p is None:
+            return None
         try:
-            if not self._lp: self._lp = self._find('legacy_container')
-            if not self._ap: self._ap = self._find('accel_container')
-            lc = self._lp.cpu_percent() if self._lp else 0
-            lr = self._lp.memory_info().rss / 1048576 if self._lp else 0
-            ac = self._ap.cpu_percent() if self._ap else 0
-            ar = self._ap.memory_info().rss / 1048576 if self._ap else 0
-        except Exception:
-            lc, lr, ac, ar = 0, 0, 0, 0
-            self._lp = None; self._ap = None
+            if not p.is_running():
+                return None
+            cmd = ' '.join(p.cmdline() or [])
+            if 'component_container' not in cmd or name not in cmd:
+                return None
+            return p
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
+
+    def _read(self, p):
+        try:
+            return p.cpu_percent(), p.memory_info().rss / 1048576
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return 0, 0
+
+    def _stats(self):
+        self._lp = self._validate(self._lp, 'legacy_container') or self._find('legacy_container')
+        self._ap = self._validate(self._ap, 'accel_container') or self._find('accel_container')
+        lc, lr = self._read(self._lp) if self._lp else (0, 0)
+        ac, ar = self._read(self._ap) if self._ap else (0, 0)
         dt = time.monotonic() - self._t
         with self.lock:
             self.l_cpu = lc; self.l_ram = lr; self.a_cpu = ac; self.a_ram = ar
@@ -118,134 +154,52 @@ class DashNode(Node):
 app = Flask(__name__)
 nd = None
 
+MJPEG_BOUNDARY = b'gstadaptframe'
+
 def _mj(side):
+    # Per-frame Content-Length lets the browser read exactly len bytes without
+    # scanning for the boundary inside JPEG payload — JPEG is binary and can
+    # contain CRLF+boundary-like byte sequences that would otherwise truncate
+    # the frame and break the stream after a few seconds.
     ev = nd.l_evt if side == 'legacy' else nd.a_evt
-    while True:
-        ev.wait(timeout=0.15); ev.clear()
-        with nd.lock:
-            j = nd.l_jpg if side == 'legacy' else nd.a_jpg
-        yield b'--f\r\nContent-Type:image/jpeg\r\n\r\n' + j + b'\r\n'
+    last_jpg = None
+    try:
+        while True:
+            ev.wait(timeout=0.2); ev.clear()
+            with nd.lock:
+                j = nd.l_jpg if side == 'legacy' else nd.a_jpg
+            if j is last_jpg:
+                continue
+            last_jpg = j
+            header = (b'--' + MJPEG_BOUNDARY + b'\r\n'
+                      b'Content-Type: image/jpeg\r\n'
+                      b'Content-Length: ' + str(len(j)).encode() + b'\r\n\r\n')
+            yield header + j + b'\r\n'
+    except (GeneratorExit, BrokenPipeError, ConnectionResetError):
+        return
 
 @app.route('/stream/<side>')
 def stream(side):
     if side not in ('legacy', 'accelerated'): return '', 404
-    return Response(_mj(side), mimetype='multipart/x-mixed-replace;boundary=f')
+    return Response(_mj(side),
+                    mimetype='multipart/x-mixed-replace; boundary=' + MJPEG_BOUNDARY.decode())
 
 @app.route('/api/stats')
 def stats():
     return Response(json.dumps(nd.json()), mimetype='application/json')
 
+@app.route('/api/system')
+def system():
+    return Response(json.dumps({'hw': detect_hardware()}), mimetype='application/json')
+
 @app.route('/')
-def index(): return HTML
+def index():
+    try:
+        with open(HTML_PATH, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f'dashboard.html not found at {HTML_PATH}', 500
 
-HTML = r'''<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GstAdaptNode Dashboard</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{bg:'#0a0e1a',card:'#111827',bdr:'#1e293b'}}}}</script>
-<style>
-body{background:#0a0e1a;margin:0}
-.live{animation:b 1.5s infinite}@keyframes b{0%,100%{opacity:1}50%{opacity:.3}}
-.tn{font-variant-numeric:tabular-nums}
-</style>
-</head>
-<body class="text-gray-200 font-[system-ui] antialiased">
-
-<header class="flex items-center justify-between px-5 py-2.5 border-b border-bdr bg-card/60 backdrop-blur sticky top-0 z-10">
-  <div class="flex items-center gap-2">
-    <div class="w-1.5 h-1.5 rounded-full bg-emerald-400 live"></div>
-    <span class="font-semibold text-white text-sm">GstAdaptNode</span>
-    <span class="text-gray-600 text-xs">A/B Benchmark</span>
-  </div>
-</header>
-
-<!-- KPI Strip -->
-<div class="max-w-[1100px] mx-auto px-3 pt-3 pb-1.5">
-  <div class="grid grid-cols-6 gap-2">
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-bdr">
-      <div class="text-[9px] font-bold text-amber-400 uppercase tracking-[0.15em]">Legacy Latency</div>
-      <div class="text-lg font-bold tn" id="ll">—</div>
-    </div>
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-bdr">
-      <div class="text-[9px] font-bold text-emerald-400 uppercase tracking-[0.15em]">Accel Latency</div>
-      <div class="text-lg font-bold tn" id="al">—</div>
-    </div>
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-cyan-900/30">
-      <div class="text-[9px] font-bold text-cyan-400 uppercase tracking-[0.15em]">Delta</div>
-      <div class="text-lg font-bold text-cyan-400 tn" id="dd">—</div>
-    </div>
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-bdr">
-      <div class="text-[9px] font-bold text-amber-400 uppercase tracking-[0.15em]">Legacy CPU</div>
-      <div class="text-lg font-bold tn" id="lc">—</div>
-      <div class="text-[9px] text-gray-600 tn" id="lr"></div>
-    </div>
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-bdr">
-      <div class="text-[9px] font-bold text-emerald-400 uppercase tracking-[0.15em]">Accel CPU</div>
-      <div class="text-lg font-bold tn" id="ac">—</div>
-      <div class="text-[9px] text-gray-600 tn" id="ar"></div>
-    </div>
-    <div class="bg-card rounded-lg px-3 py-2.5 border border-bdr">
-      <div class="text-[9px] font-bold text-gray-500 uppercase tracking-[0.15em]">FPS</div>
-      <div class="flex gap-2">
-        <span class="text-sm font-bold tn" id="lf">—</span>
-        <span class="text-sm font-bold tn" id="af">—</span>
-      </div>
-      <div class="text-[9px] text-gray-600">L / A</div>
-    </div>
-  </div>
-</div>
-
-<!-- Video -->
-<div class="max-w-[1100px] mx-auto px-3 pb-4">
-  <div class="grid md:grid-cols-2 gap-2.5">
-    <div class="bg-card rounded-xl overflow-hidden border border-bdr">
-      <div class="flex items-center gap-1.5 px-3 py-1 border-b border-bdr">
-        <div class="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
-        <span class="text-[9px] font-bold text-amber-400 uppercase tracking-[0.15em]">Legacy</span>
-        <span class="text-[9px] text-gray-600 ml-auto">image_proc::ResizeNode</span>
-      </div>
-      <img src="/stream/legacy" class="w-full aspect-video bg-black" alt="">
-      <div class="px-3 py-1 text-[9px] text-gray-600 flex justify-between border-t border-bdr">
-        <span>OpenCV cv::resize (CPU)</span><span>image_transport + CameraSubscriber</span>
-      </div>
-    </div>
-    <div class="bg-card rounded-xl overflow-hidden border border-emerald-900/20">
-      <div class="flex items-center gap-1.5 px-3 py-1 border-b border-emerald-900/20">
-        <div class="w-1.5 h-1.5 rounded-full bg-emerald-400 live"></div>
-        <span class="text-[9px] font-bold text-emerald-400 uppercase tracking-[0.15em]">Accelerated</span>
-        <span class="text-[9px] text-gray-600 ml-auto">gst_adapt_node::ResizeNode</span>
-      </div>
-      <img src="/stream/accelerated" class="w-full aspect-video bg-black" alt="">
-      <div class="px-3 py-1 text-[9px] text-gray-600 flex justify-between border-t border-emerald-900/20">
-        <span>Zero-copy intra-process cv::resize</span><span>Direct callback (no image_transport)</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<footer class="text-center text-[9px] text-gray-700 py-2 border-t border-bdr">
-  GstAdaptNode &middot; Apache-2.0 &middot; <a href="https://github.com/sohams25/GstAdaptNode" class="hover:text-cyan-500">GitHub</a>
-</footer>
-
-<script>
-const c=ms=>ms<30?'#22c55e':ms<80?'#67e8f9':'#f87171';
-const cc=p=>p<80?'#22c55e':p<150?'#fbbf24':'#f87171';
-async function u(){try{
-const d=await(await fetch('/api/stats')).json();
-const $=id=>document.getElementById(id);
-$('ll').textContent=d.ll+' ms';$('ll').style.color=c(d.ll);
-$('al').textContent=d.al+' ms';$('al').style.color=c(d.al);
-$('dd').textContent=d.d+' ms';
-$('lc').textContent=d.lc+'%';$('lc').style.color=cc(d.lc);
-$('ac').textContent=d.ac+'%';$('ac').style.color=cc(d.ac);
-$('lr').textContent=d.lr+' MB';
-$('ar').textContent=d.ar+' MB';
-$('lf').textContent=d.lf;$('af').textContent=d.af;
-}catch(e){}}
-setInterval(u,500);u();
-</script>
-</body></html>'''
 
 
 def main(args=None):

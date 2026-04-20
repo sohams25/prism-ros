@@ -3,14 +3,77 @@ A/B Stress Test: Two separate containers for independent CPU measurement.
 Each has its own MediaStreamerNode (10 fps cap to prevent PC overload).
 """
 
+import glob
+import os
+
+import psutil
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 
 
+_PACKAGE_MARKER = 'install/gst_adapt_node/lib/gst_adapt_node'
+_FASTDDS_PROFILE = os.path.join(
+    get_package_share_directory('gst_adapt_node'), 'config', 'fastdds_no_shm.xml')
+
+
+def _reap_orphans():
+    """Kill leftover processes from prior launches of this package.
+
+    `ros2 launch` doesn't always propagate SIGTERM/SIGKILL to child python
+    nodes (e.g. latency_tracker.py) on crash or kill -9 of the parent. The
+    survivors keep holding Fast-DDS SHM locks, which blocks the next launch's
+    SHM init (triggering the RTPS_TRANSPORT_SHM error).
+    """
+    me = os.getpid()
+    for p in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            if p.info['pid'] == me:
+                continue
+            cmd = ' '.join(p.info['cmdline'] or [])
+            if _PACKAGE_MARKER in cmd:
+                p.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+
+def _purge_stale_fastdds_shm():
+    """Remove /dev/shm/fastrtps_* files not held by any live process.
+
+    Fast-DDS logs an SHM init error and silently falls back to UDP when stale
+    locks remain from a prior ROS 2 run. Cleaning them keeps SHM transport
+    healthy across restarts. Must run AFTER _reap_orphans so we don't skip
+    files held by a zombie we're about to kill.
+    """
+    live = set()
+    for p in psutil.process_iter(['name']):
+        try:
+            for f in p.open_files():
+                if 'fastrtps' in f.path:
+                    live.add(f.path)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
+            pass
+    for path in glob.glob('/dev/shm/fastrtps_*') + glob.glob('/dev/shm/sem.fastrtps_*'):
+        if path not in live:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 def generate_launch_description():
+    # Disable Fast-DDS SHM transport: UDPv4-only profile avoids the
+    # RTPS_TRANSPORT_SHM "Failed init_port" errors from stale /dev/shm locks.
+    # Intra-process comms (unique_ptr move) already handle the hot path; this
+    # only affects inter-container discovery traffic, which is tiny.
+    os.environ['FASTRTPS_DEFAULT_PROFILES_FILE'] = _FASTDDS_PROFILE
+
+    _reap_orphans()
+    _purge_stale_fastdds_shm()
 
     video_path_arg = DeclareLaunchArgument(
         'video_path', default_value='/tmp/test_video.mp4')
@@ -105,6 +168,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', _FASTDDS_PROFILE),
         video_path_arg,
         legacy_container,
         accel_container,
