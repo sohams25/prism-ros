@@ -1,3 +1,0 @@
-[submodule "dependencies/ros-gst-bridge"]
-	path = dependencies/ros-gst-bridge
-	url = https://github.com/BrettRD/ros-gst-bridge.git
