@@ -114,6 +114,42 @@ reproduces deterministically: replace the subscriber body with
 `bridge.cv2_to_imgmsg(...)`, rebuild, re-launch, observe
 first-message SIGSEGV on the colorconvert operation.
 
+## The 1080p re-measurement that didn't happen
+
+The 4K colorconvert row in the published results table is structural,
+not a kernel-cost result: the stock-side Python `rclpy` subscriber
+cannot drain `sensor_msgs/Image` messages fast enough at 4K BGR8 @
+10 Hz (~240 MB/s on a single core), and frames queue with unbounded
+latency. A 1920×1080 re-measurement was attempted to lift the stock
+subscriber out of throughput collapse and recover an apples-to-apples
+kernel comparison.
+
+It did not work. Same 15-second dry-run pattern at 1080p:
+
+| side  | rate at 1080p, 15 s | min/mean/max latency (ms)        |
+| ----- | ------------------: | -------------------------------- |
+| Prism | 10.08 Hz            | 1.6 / 6.5 / 23.8                 |
+| Stock |  3.45 Hz            | 1198 / 1262 / 1309               |
+
+A NumPy `frombuffer + reshape + ::-1.copy() + tobytes()` micro-bench
+on a 1080p BGR8 buffer in isolation runs at 7.4 ms per frame
+(~135 fps ceiling) — 13× headroom over 10 Hz. The bottleneck is
+therefore not the conversion arithmetic. It is the rclpy Python
+subscriber + DDS round-trip + `array.array` ↔ `np.frombuffer`
+overhead at multi-MB message sizes. Stock fps scaling proportionally
+with frame size (0.85 Hz at 4K → 3.45 Hz at 1080p, ≈4× ratio matching
+the pixel count ratio) is consistent with that diagnosis.
+
+Two paths could produce a true kernel-cost colorconvert row:
+(a) drop the source resolution to VGA so the Python subscriber
+actually keeps up — but at that scale the row redundantly demonstrates
+what the chain row already shows; (b) write a C++ stock-side
+colorconvert component, side-stepping the Python path entirely.
+Neither was pursued for v0.1.0. The colorconvert row in the published
+results table is presented as a Python-subscriber-throughput-ceiling
+finding, not as a kernel comparison, and the headline `−99.4 %` Δ%
+is not used.
+
 ## Sources of noise, mitigations
 
 - **First-run cold-cache effects.** Drop the first 10 s of each

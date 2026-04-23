@@ -207,15 +207,78 @@ On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present b
 
 ## Benchmarks
 
-Benchmarks are being re-measured against the current chainable
-architecture (action registry, per-action CameraInfo transforms,
-and image_transport plumbing). The prior numbers predate those
-layers and no longer represent the production path.
+A/B captures against stock ROS 2 Humble image processing on an Intel
+desktop. Source is a 3840×2160 H.264 clip streamed at 10 Hz via
+`prism::MediaStreamerNode`. Both sides run in component containers;
+latency is per-frame from publish stamp to subscriber receive.
+Methodology, per-run CSVs, and reproduction commands live in
+[`bench/`](bench/); the commit-pinned summary is
+[`bench/results/summary.md`](bench/results/summary.md).
 
-Fresh methodology and A/B results — Intel desktop first, then
-Jetson Orin — will ship with the next release. Track progress
-via [GitHub Releases](https://github.com/sohams25/prism-ros/releases)
-or the [project site](https://sohams25.github.io/prism-ros/).
+### Per-kernel latency (3840×2160 @ 10 Hz)
+
+A/B against the closest upstream `image_proc` C++ component for each
+Prism action. Both sides sustain the 10 Hz source.
+
+| Action   | Stock plugin                       | Prism median (ms) | Stock median (ms) | Δ        |
+| -------- | ---------------------------------- | ----------------: | ----------------: | -------: |
+| `resize` | `image_proc::ResizeNode`           |              5.67 |             13.61 |  −58.3 % |
+| `crop`   | `image_proc::CropDecimateNode`     |             13.40 |             28.80 |  −53.5 % |
+
+Both sides are C++ component-container nodes. The delta is kernel
+plus intra-process delivery cost.
+
+### Pipeline architecture (3840×2160 @ 10 Hz)
+
+A three-stage `crop → resize → colorconvert` chain. Stock side runs
+three separate `image_proc` nodes DDS-piped together; Prism runs the
+full chain inside one `prism::ImageProcNode` with intra-process
+composition.
+
+| Pipeline                       | Prism median (ms) | Stock median (ms) | Δ        |
+| ------------------------------ | ----------------: | ----------------: | -------: |
+| `crop → resize → colorconvert` |             12.90 |             75.47 |  −82.9 % |
+
+The delta here is dominated by Prism's single-pipeline architecture
+avoiding two intermediate DDS round-trips on the stock side, not by
+per-kernel speedup. See the chain-composition caveat in
+[`bench/METHODOLOGY.md`](bench/METHODOLOGY.md).
+
+### Stock Python subscriber throughput ceiling (3840×2160 @ 10 Hz)
+
+`image_proc` ships no dedicated colorconvert node, so the closest
+available stock-side reference is a Python `rclpy` subscriber that
+performs the conversion (`cv_bridge` where it works, NumPy fallback
+where it does not — see methodology). At 4K BGR8 @ 10 Hz the source
+publishes ~240 MB/s; the Python subscriber cannot drain it. Frames
+queue in the receive buffer with unbounded latency.
+
+| Side                                          | Realised fps | Median latency (ms) |
+| --------------------------------------------- | -----------: | ------------------: |
+| Prism (`prism::ColorConvertNode`, C++)        |        10.01 |               12.57 |
+| Stock (`rclpy` Image subscriber, NumPy back)  |         0.85 |             2173.09 |
+
+This is **not** a kernel-level efficiency comparison. It is a
+structural finding about the ROS 2 Python subscriber path on large
+`sensor_msgs/Image` messages: GIL plus `rclpy` deserialization plus
+per-callback memory copies cannot keep up with 4K @ 10 Hz on a single
+core, regardless of how fast the conversion arithmetic itself runs.
+Prism's C++ component path side-steps the bottleneck entirely. A C++
+stock-side colorconvert reference would close this gap; `image_proc`
+does not ship one. Methodology, the `cv_bridge` segfault context, and
+the abandoned 1080p re-measurement are recorded in
+[`bench/METHODOLOGY.md`](bench/METHODOLOGY.md).
+
+### Reproducing
+
+```bash
+python3 bench/run.py --operation resize --video /path/to/4k.mp4 \
+  --duration 120 --output-dir bench/results/
+python3 bench/analyze.py --results-dir bench/results/ \
+  --output bench/results/summary.json
+```
+
+Repeat with `--operation {crop,colorconvert,chain}`.
 
 ### Jetson (Orin) — pending
 

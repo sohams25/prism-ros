@@ -1001,23 +1001,123 @@ source install/setup.bash</code></pre>
   <div class="container">
     <span class="section-eyebrow">06 — Benchmarks</span>
     <h2 class="section-title" id="bench-title">Benchmarks</h2>
-    <div class="bench">
-      <div class="label">Re-measurement in progress</div>
-      <h3>Numbers are being re-captured against the chainable architecture.</h3>
+
+    <p class="lede">
+      A/B captures against stock ROS 2 Humble image processing on an Intel desktop. The
+      source is a 3840×2160 H.264 clip streamed at 10 Hz via
+      <code>prism::MediaStreamerNode</code>. Both sides run in component containers;
+      latency is per-frame from publish stamp to subscriber receive. Methodology,
+      per-run CSVs, and reproduction commands live in
+      <a href="https://github.com/sohams25/prism-ros/tree/main/bench"><code>bench/</code></a>;
+      the commit-pinned summary is
+      <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/summary.md"><code>bench/results/summary.md</code></a>.
+    </p>
+
+    <h3 class="sub-title">Per-kernel latency (3840×2160 @ 10 Hz)</h3>
+    <p>
+      A/B against the closest upstream <code>image_proc</code> C++ component for each
+      Prism action. Both sides sustain the 10 Hz source. The delta is kernel plus
+      intra-process delivery cost.
+    </p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Action</th><th>Stock plugin</th><th>Prism median</th><th>Stock median</th><th>Δ</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="Action"><code>resize</code></td>
+            <td data-label="Stock plugin"><code>image_proc::ResizeNode</code></td>
+            <td data-label="Prism median">5.67 ms</td>
+            <td data-label="Stock median">13.61 ms</td>
+            <td data-label="Δ">−58.3 %</td>
+          </tr>
+          <tr>
+            <td data-label="Action"><code>crop</code></td>
+            <td data-label="Stock plugin"><code>image_proc::CropDecimateNode</code></td>
+            <td data-label="Prism median">13.40 ms</td>
+            <td data-label="Stock median">28.80 ms</td>
+            <td data-label="Δ">−53.5 %</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-title">Pipeline architecture (3840×2160 @ 10 Hz)</h3>
+    <p>
+      A three-stage <code>crop → resize → colorconvert</code> chain. Stock side runs
+      three separate <code>image_proc</code> nodes DDS-piped together; Prism runs the
+      full chain inside one <code>prism::ImageProcNode</code> with intra-process
+      composition.
+    </p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Pipeline</th><th>Prism median</th><th>Stock median</th><th>Δ</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="Pipeline"><code>crop → resize → colorconvert</code></td>
+            <td data-label="Prism median">12.90 ms</td>
+            <td data-label="Stock median">75.47 ms</td>
+            <td data-label="Δ">−82.9 %</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="finding" role="note">
+      <h3>The chain delta is architectural, not kernel</h3>
       <p>
-        Benchmarks are being re-measured against the current chainable architecture
-        (action registry + <code>CameraInfo</code> transforms + <code>image_transport</code>
-        plumbing). The prior numbers were captured before these layers landed and no longer
-        represent the production path.
+        The chain delta is dominated by Prism's single-pipeline architecture avoiding
+        two intermediate DDS round-trips on the stock side, not by any per-kernel
+        speedup. The per-kernel rows above carry the kernel claim; the chain row
+        carries the architectural claim. See the chain-composition caveat in
+        <a href="https://github.com/sohams25/prism-ros/blob/main/bench/METHODOLOGY.md"><code>bench/METHODOLOGY.md</code></a>.
       </p>
+    </div>
+
+    <h3 class="sub-title">Stock Python subscriber throughput ceiling (3840×2160 @ 10 Hz)</h3>
+    <p>
+      <code>image_proc</code> ships no dedicated colorconvert node, so the closest
+      available stock-side reference is a Python <code>rclpy</code> subscriber that
+      performs the conversion (<code>cv_bridge</code> where it works, NumPy fallback
+      where it does not — see methodology). At 4K BGR8 @ 10 Hz the source publishes
+      ~240 MB/s; the Python subscriber cannot drain it. Frames queue in the receive
+      buffer with unbounded latency.
+    </p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Side</th><th>Realised fps</th><th>Median latency</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="Side">Prism (<code>prism::ColorConvertNode</code>, C++)</td>
+            <td data-label="Realised fps">10.01</td>
+            <td data-label="Median latency">12.57 ms</td>
+          </tr>
+          <tr>
+            <td data-label="Side">Stock (<code>rclpy</code> Image subscriber, NumPy back)</td>
+            <td data-label="Realised fps">0.85</td>
+            <td data-label="Median latency">2173 ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="finding" role="note">
+      <h3>Why the colorconvert row is not a kernel comparison</h3>
       <p>
-        Methodology notes, A/B comparison results on Intel desktop, and Jetson Orin validation
-        will appear here with the v0.2.0 release.
+        This row is a structural finding about the ROS 2 Python subscriber path on
+        large <code>sensor_msgs/Image</code> messages, not a kernel-level efficiency
+        claim. GIL plus <code>rclpy</code> deserialization plus per-callback memory
+        copies cannot keep up with 4K @ 10 Hz on a single core, regardless of how
+        fast the conversion arithmetic itself runs. Prism's C++ component path
+        side-steps the bottleneck entirely. A C++ stock-side colorconvert reference
+        would close this gap; <code>image_proc</code> does not ship one. Methodology,
+        the <code>cv_bridge</code> segfault context, and the abandoned 1080p
+        re-measurement are recorded in
+        <a href="https://github.com/sohams25/prism-ros/blob/main/bench/METHODOLOGY.md"><code>bench/METHODOLOGY.md</code></a>.
       </p>
-      <a class="btn btn-secondary" href="https://github.com/sohams25/prism-ros/releases" rel="noopener" style="margin-top:14px">
-        Subscribe to releases on GitHub
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l6-6M4 3h5v5"/></svg>
-      </a>
     </div>
   </div>
 </section>
