@@ -7,3 +7,9 @@ __pycache__/
 *.db3
 *.mp4
 *.bag
+
+# Conference submission artifacts (kept local, never pushed)
+docs/ROSCON_*.md
+docs/roscon_*.md
+ROSCON_*.md
+roscon_*.md
