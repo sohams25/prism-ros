@@ -41,6 +41,9 @@ direct-mode fallback. Drop-in replacement for
   build strings.
 - GitHub Actions CI on the `ros:humble` container: build + gtest
   on every push and PR.
+- Project site at https://sohams25.github.io/prism-ros/ with
+  dark-mode-first developer-tool styling (Tokyo Night palette,
+  prism-refraction hero motif).
 
 ### Known limitations
 
