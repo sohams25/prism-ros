@@ -7,18 +7,18 @@ from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
-    pkg_dir = get_package_share_directory('gst_adapt_node')
+    pkg_dir = get_package_share_directory('prism_image_proc')
     params_file = os.path.join(pkg_dir, 'config', 'demo_params.yaml')
 
     container = ComposableNodeContainer(
-        name='gst_adapt_container',
+        name='prism_image_proc_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container',
         composable_node_descriptions=[
             ComposableNode(
-                package='gst_adapt_node',
-                plugin='gst_adapt_node::ResizeNode',
+                package='prism_image_proc',
+                plugin='prism::ImageProcNode',
                 name='resize_node',
                 parameters=[params_file],
                 extra_arguments=[{'use_intra_process_comms': True}],

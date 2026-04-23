@@ -1,10 +1,10 @@
-#ifndef GST_ADAPT_NODE__HARDWARE_DETECTOR_HPP_
-#define GST_ADAPT_NODE__HARDWARE_DETECTOR_HPP_
+#ifndef PRISM_IMAGE_PROC__HARDWARE_DETECTOR_HPP_
+#define PRISM_IMAGE_PROC__HARDWARE_DETECTOR_HPP_
 
 #include <string>
 #include <vector>
 
-namespace gst_adapt_node
+namespace prism
 {
 
 enum class HardwarePlatform
@@ -35,6 +35,6 @@ private:
   static std::vector<std::string> glob_paths(const std::string & pattern);
 };
 
-}  // namespace gst_adapt_node
+}  // namespace prism
 
-#endif  // GST_ADAPT_NODE__HARDWARE_DETECTOR_HPP_
+#endif  // PRISM_IMAGE_PROC__HARDWARE_DETECTOR_HPP_

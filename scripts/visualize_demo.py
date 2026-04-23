@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """
-GstAdaptNode A/B Web Dashboard.
+Prism A/B Web Dashboard.
 Two-container architecture: tracks legacy_container and accel_container CPU independently.
 """
 
@@ -38,7 +38,7 @@ def detect_hardware():
 class DashNode(Node):
     def __init__(self):
         super().__init__('visualize_demo')
-        # RELIABLE to match publishers (image_proc and gst_adapt_node default).
+        # RELIABLE to match publishers (image_proc and prism_image_proc default).
         # depth=2 keeps the dashboard snappy without queueing old frames.
         qos = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST)

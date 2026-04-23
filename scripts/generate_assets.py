@@ -32,7 +32,7 @@ def style_ax(ax, title, ylabel):
 
 def cpu_chart():
     fig, ax = plt.subplots(figsize=(6, 4.5), facecolor=DARK_BG)
-    labels = ['Legacy\n(image_proc)', 'Accelerated\n(GstAdaptNode)']
+    labels = ['Legacy\n(image_proc)', 'Accelerated\n(Prism)']
     values = [180, 16]
     colors = [RED, CYAN]
 
@@ -58,7 +58,7 @@ def cpu_chart():
 
 def latency_chart():
     fig, ax = plt.subplots(figsize=(6, 4.5), facecolor=DARK_BG)
-    labels = ['Legacy\n(image_proc)', 'Accelerated\n(GstAdaptNode)']
+    labels = ['Legacy\n(image_proc)', 'Accelerated\n(Prism)']
     values = [45, 30]
     colors = [RED, CYAN]
 

@@ -1,4 +1,4 @@
-#include "gst_adapt_node/synthetic_4k_pub_node.hpp"
+#include "prism_image_proc/synthetic_4k_pub_node.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/imgproc.hpp>
@@ -9,7 +9,7 @@
 
 using namespace std::chrono_literals;
 
-namespace gst_adapt_node
+namespace prism
 {
 
 Synthetic4kPubNode::Synthetic4kPubNode(const rclcpp::NodeOptions & options)
@@ -104,6 +104,6 @@ void Synthetic4kPubNode::on_timer()
   ++frame_id_;
 }
 
-}  // namespace gst_adapt_node
+}  // namespace prism
 
-RCLCPP_COMPONENTS_REGISTER_NODE(gst_adapt_node::Synthetic4kPubNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(prism::Synthetic4kPubNode)

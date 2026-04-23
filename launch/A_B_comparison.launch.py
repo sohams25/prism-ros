@@ -16,9 +16,9 @@ from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 
 
-_PACKAGE_MARKER = 'install/gst_adapt_node/lib/gst_adapt_node'
+_PACKAGE_MARKER = 'install/prism_image_proc/lib/prism_image_proc'
 _FASTDDS_PROFILE = os.path.join(
-    get_package_share_directory('gst_adapt_node'), 'config', 'fastdds_no_shm.xml')
+    get_package_share_directory('prism_image_proc'), 'config', 'fastdds_no_shm.xml')
 
 
 def _reap_orphans():
@@ -87,8 +87,8 @@ def generate_launch_description():
         executable='component_container',
         composable_node_descriptions=[
             ComposableNode(
-                package='gst_adapt_node',
-                plugin='gst_adapt_node::MediaStreamerNode',
+                package='prism_image_proc',
+                plugin='prism::MediaStreamerNode',
                 name='legacy_source',
                 parameters=[{
                     'video_path': video_path,
@@ -127,8 +127,8 @@ def generate_launch_description():
         executable='component_container',
         composable_node_descriptions=[
             ComposableNode(
-                package='gst_adapt_node',
-                plugin='gst_adapt_node::MediaStreamerNode',
+                package='prism_image_proc',
+                plugin='prism::MediaStreamerNode',
                 name='accel_source',
                 parameters=[{
                     'video_path': video_path,
@@ -139,8 +139,8 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}],
             ),
             ComposableNode(
-                package='gst_adapt_node',
-                plugin='gst_adapt_node::ResizeNode',
+                package='prism_image_proc',
+                plugin='prism::ImageProcNode',
                 name='accel_resize',
                 parameters=[{
                     'input_topic': '/accelerated/image_raw',
@@ -160,7 +160,7 @@ def generate_launch_description():
     )
 
     latency = Node(
-        package='gst_adapt_node',
+        package='prism_image_proc',
         executable='latency_tracker.py',
         name='latency_tracker',
         output='screen',

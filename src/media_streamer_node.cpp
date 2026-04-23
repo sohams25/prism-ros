@@ -1,4 +1,4 @@
-#include "gst_adapt_node/media_streamer_node.hpp"
+#include "prism_image_proc/media_streamer_node.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/imgproc.hpp>
@@ -6,7 +6,7 @@
 
 #include <chrono>
 
-namespace gst_adapt_node
+namespace prism
 {
 
 MediaStreamerNode::MediaStreamerNode(const rclcpp::NodeOptions & options)
@@ -98,6 +98,6 @@ void MediaStreamerNode::on_timer()
   ++frame_id_;
 }
 
-}  // namespace gst_adapt_node
+}  // namespace prism
 
-RCLCPP_COMPONENTS_REGISTER_NODE(gst_adapt_node::MediaStreamerNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(prism::MediaStreamerNode)

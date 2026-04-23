@@ -1,12 +1,12 @@
-#ifndef GST_ADAPT_NODE__SYNTHETIC_4K_PUB_NODE_HPP_
-#define GST_ADAPT_NODE__SYNTHETIC_4K_PUB_NODE_HPP_
+#ifndef PRISM_IMAGE_PROC__SYNTHETIC_4K_PUB_NODE_HPP_
+#define PRISM_IMAGE_PROC__SYNTHETIC_4K_PUB_NODE_HPP_
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <opencv2/core.hpp>
 
-namespace gst_adapt_node
+namespace prism
 {
 
 class Synthetic4kPubNode : public rclcpp::Node
@@ -37,6 +37,6 @@ private:
   void restore_region(cv::Rect roi);
 };
 
-}  // namespace gst_adapt_node
+}  // namespace prism
 
-#endif  // GST_ADAPT_NODE__SYNTHETIC_4K_PUB_NODE_HPP_
+#endif  // PRISM_IMAGE_PROC__SYNTHETIC_4K_PUB_NODE_HPP_

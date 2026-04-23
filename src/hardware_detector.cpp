@@ -1,11 +1,11 @@
-#include "gst_adapt_node/hardware_detector.hpp"
+#include "prism_image_proc/hardware_detector.hpp"
 
 #include <glob.h>
 #include <sys/stat.h>
 
 #include <algorithm>
 
-namespace gst_adapt_node
+namespace prism
 {
 
 // ---------------------------------------------------------------------------
@@ -119,4 +119,4 @@ PlatformInfo HardwareDetector::detect_platform() const
   return info;
 }
 
-}  // namespace gst_adapt_node
+}  // namespace prism

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1440,initial-scale=1" />
-  <title>GstAdaptNode · A/B Benchmark</title>
-  <meta name="description" content="Side-by-side ROS 2 pipeline benchmark — image_proc vs gst_adapt_node." />
+  <title>Prism · A/B Benchmark</title>
+  <meta name="description" content="Side-by-side ROS 2 pipeline benchmark — image_proc vs prism_image_proc." />
 
   <!-- Fonts: Geist (sans) + Geist Mono. JetBrains Mono as fallback. -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -187,10 +187,10 @@
             <rect x="1" y="10" width="7" height="7" rx="1" fill="#4F9CF9" fill-opacity="0.35"/>
             <rect x="10" y="10" width="7" height="7" rx="1" stroke="#5A6069" stroke-width="1.2"/>
           </svg>
-          <span class="font-mono text-[13px] font-medium tracking-tight">GstAdaptNode</span>
+          <span class="font-mono text-[13px] font-medium tracking-tight">Prism</span>
         </div>
         <span class="text-text-dim text-[11px] shrink-0">/</span>
-        <span class="text-text-muted text-[12px] truncate">Hardware-agnostic ROS 2 perception acceleration</span>
+        <span class="text-text-muted text-[12px] truncate">ROS 2 perception acceleration that picks the right path through your hardware</span>
       </div>
 
       <div class="flex items-center gap-2 shrink-0">
@@ -249,7 +249,7 @@
             <span id="alHero" class="num font-mono text-[28px] text-text tabular-nums leading-none">5.8</span>
             <span class="font-mono text-text-muted text-[13px]">ms</span>
           </div>
-          <div class="text-text-dim text-[11px] font-mono truncate">gst_adapt_node::ResizeNode</div>
+          <div class="text-text-dim text-[11px] font-mono truncate">prism::ResizeNode</div>
         </div>
 
         <!-- Reduction % -->
@@ -308,7 +308,7 @@
           <div class="flex items-baseline justify-between gap-3 truncate-min">
             <div class="flex items-baseline gap-2.5 truncate-min">
               <span class="cap shrink-0" style="color: var(--accent);">Accelerated</span>
-              <span class="font-mono text-[12px] text-text truncate">gst_adapt_node::ResizeNode</span>
+              <span class="font-mono text-[12px] text-text truncate">prism::ResizeNode</span>
             </div>
             <span id="accTierLabel" class="font-mono text-[10px] text-text-dim tracking-caps uppercase shrink-0">Direct mode</span>
           </div>
@@ -414,11 +414,11 @@
     <!-- ─────────── FOOTER ─────────── -->
     <footer class="shrink-0 h-9 flex items-center justify-between px-4 rounded-lg bg-surface border border-border">
       <div class="flex items-center gap-4 text-[11px] font-mono text-text-muted truncate-min">
-        <a href="https://github.com/sohams25/GstAdaptNode" target="_blank" rel="noopener" class="hover:text-text transition-colors inline-flex items-center gap-1.5 truncate">
+        <a href="https://github.com/sohams25/prism-ros" target="_blank" rel="noopener" class="hover:text-text transition-colors inline-flex items-center gap-1.5 truncate">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="shrink-0">
             <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.22.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.77-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.11 0 0 .67-.22 2.2.82a7.66 7.66 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.91.08 2.11.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.74.54 1.49v2.21c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
           </svg>
-          <span class="truncate">sohams25/GstAdaptNode</span>
+          <span class="truncate">sohams25/prism-ros</span>
         </a>
         <span class="text-text-dim shrink-0">·</span>
         <span class="shrink-0">Apache-2.0</span>
