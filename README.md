@@ -55,11 +55,11 @@ Jetson Orin on Humble, and non-NVIDIA embedded hosts.
 Hardware acceleration on Intel requires GStreamer 1.22+, i.e. Ubuntu 24.04 /
 Jazzy. On stock Humble (GStreamer 1.20) the `vaapipostproc` element is
 present but fails live validation due to a chroma-subsampling regression,
-and the Intel iGPU path gracefully falls back to direct mode. The headline
-numbers below were captured in exactly that configuration — the win comes
-from eliminating the `image_transport` + `CameraSubscriber` DDS round-trip,
-not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs
-and the win is compounded by offloading the resize kernel.
+and the Intel iGPU path gracefully falls back to direct mode. In that
+configuration the win comes from eliminating the `image_transport` +
+`CameraSubscriber` DDS round-trip, not from a GPU kernel. On Jazzy hosts
+or Jetson hosts, the GPU path runs and the win is compounded by offloading
+the resize kernel.
 
 **What Prism is not:**
 
@@ -69,35 +69,17 @@ and the win is compounded by offloading the resize kernel.
 - Not a replacement for CUDA-resident compute graphs; it is a portable
   resize node that wins on the hosts Isaac ROS does not serve.
 
-## Current Benchmark
+## Benchmarks
 
-Measured over a **~170-second sustained A/B run** on an Intel desktop, GStreamer 1.20, direct-mode fallback. 4K (3840×2160) BGR8 source → 640×480 at 10 Hz. 2108 legacy + 2109 accel per-frame latency records; 170 samples of CPU / RSS at 1 Hz. First 10 s dropped as warmup.
+Benchmarks are being re-measured against the current chainable
+architecture (action registry, per-action CameraInfo transforms,
+and image_transport plumbing). The prior numbers predate those
+layers and no longer represent the production path.
 
-| Metric | `image_proc::ResizeNode` | `prism::ResizeNode` | Delta |
-|---|---|---|---|
-| **Latency — median** | 12.25 ms | **4.80 ms** | **7.45 ms faster** (60.8 %) |
-| **Latency — mean** | 14.28 ms | **7.68 ms** | **6.60 ms faster** (46.2 %) |
-| **Latency — p95** | 21.84 ms | **14.46 ms** | **7.38 ms** |
-| **Latency — p99** | 29.76 ms | **24.38 ms** | **5.38 ms** |
-| **Latency — stdev** | 4.96 ms | 5.27 ms | — |
-| **Frame rate** | 9.99 fps (σ 0.08) | 10.00 fps (σ 0.19) | steady |
-| **Container CPU — mean** | 64.99 % | **55.54 %** | **9.4 pp** |
-| **Container CPU — p95** | 74.65 % | **64.00 %** | **10.65 pp** |
-| **Container RSS — mean** | 810.52 MB | **747.56 MB** | **62.96 MB** |
-
-<p align="center">
-  <img src="docs/assets/latency_distribution.svg" alt="Latency distribution: min, p5, median, p95, max" width="720"/>
-</p>
-
-<p align="center">
-  <img src="docs/assets/latency_timeseries.svg" alt="Per-frame latency time series, 170s run" width="720"/>
-</p>
-
-<p align="center">
-  <img src="docs/assets/resource_usage.svg" alt="Resource comparison: latency / CPU / RSS" width="720"/>
-</p>
-
-On this host the GPU path is skipped because GStreamer 1.20's `vaapipostproc` has a chroma-loss bug (Y plane only). The node detects it, falls back to direct mode, and **still wins by 7.4 ms at the median** because it eliminates the `image_transport` + `CameraSubscriber` DDS round-trip entirely. On hosts with a working GPU (NVIDIA Jetson `nvvideoconvert`, or Intel on GStreamer 1.22+ with `vapostproc`), the accelerated path additionally offloads the resize kernel to dedicated silicon and frees CPU for SLAM / perception / planning.
+Fresh methodology and A/B results — Intel desktop first, then
+Jetson Orin — will ship with the next release. Track progress
+via [GitHub Releases](https://github.com/sohams25/prism-ros/releases)
+or the [project site](https://sohams25.github.io/prism-ros/).
 
 ### Jetson (Orin) — pending
 

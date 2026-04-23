@@ -694,14 +694,9 @@
         </dl>
 
         <div class="spec-strip">
-          <h6>Headline · 170&nbsp;s A/B</h6>
+          <h6>Benchmarks</h6>
           <dl>
-            <dt>Source</dt><dd>4K BGR8 &middot; 10 Hz</dd>
-            <dt>Output</dt><dd>640&times;480 BGR8</dd>
-            <dt>Latency</dt><dd>median 4.80 ms</dd>
-            <dt>Delta</dt><dd>&minus;7.45 ms (&minus;60.8%)</dd>
-            <dt>CPU</dt><dd>&minus;9.4 pp mean</dd>
-            <dt>RSS</dt><dd>&minus;63 MB mean</dd>
+            <dt>Status</dt><dd>Pending re-measurement</dd>
           </dl>
         </div>
       </aside>
@@ -710,7 +705,7 @@
     <!-- ─────────── Abstract ─────────── -->
     <div class="abstract">
       <p>
-        <span class="dropcap">W</span>e present a runtime-adaptive ROS&nbsp;2 image-resize node that auto-selects between GStreamer hardware pipelines (NVIDIA&nbsp;NVMM, Intel&nbsp;VA-API) and a direct CPU fallback &mdash; preserving the exact parameter interface of <code>image_proc::ResizeNode</code>. The node validates each accelerator against the live GStreamer registry at startup, silently skipping broken ones such as <code>vaapipostproc</code> on GStreamer&nbsp;1.20. In a sustained 170-second A/B run at 4K&nbsp;&rarr;&nbsp;640&times;480, the accelerated path cuts per-frame latency by 7.45&nbsp;ms at the median (60.8%), lowers mean container CPU by 9.4 percentage points, and trims resident memory by 63&nbsp;MB &mdash; while remaining a two-line change in any existing launch file.
+        <span class="dropcap">W</span>e present a runtime-adaptive ROS&nbsp;2 image-processing node that auto-selects between GStreamer hardware pipelines (NVIDIA&nbsp;NVMM, Intel&nbsp;VA-API) and a direct CPU fallback &mdash; preserving the exact parameter interface of <code>image_proc::ResizeNode</code>. The node validates each accelerator against the live GStreamer registry at startup, silently skipping broken ones such as <code>vaapipostproc</code> on GStreamer&nbsp;1.20. Chainable <code>resize</code>, <code>crop</code>, <code>flip</code>, and <code>colorconvert</code> actions compose inside a single process with scaled <code>CameraInfo</code> tracking the image through each stage &mdash; while remaining a two-line change in any existing launch file. Fresh A/B numbers against the current chainable architecture are pending re-measurement.
       </p>
     </div>
 
@@ -779,7 +774,7 @@
 
         <h3><span class="numeral">2.2</span> A principled hardware-stack finding</h3>
         <p>
-          Hardware acceleration on Intel requires GStreamer&nbsp;1.22+, i.e.&nbsp;Ubuntu&nbsp;24.04 / Jazzy. On stock Humble (GStreamer&nbsp;1.20) the <code>vaapipostproc</code> element is present but fails live validation due to a chroma-subsampling regression, and the Intel iGPU path gracefully falls back to direct mode. The headline numbers in &sect;5 were captured in exactly that configuration: the win comes from eliminating the <code>image_transport</code> + <code>CameraSubscriber</code> DDS round-trip, not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs and the kernel offload compounds the win.
+          Hardware acceleration on Intel requires GStreamer&nbsp;1.22+, i.e.&nbsp;Ubuntu&nbsp;24.04 / Jazzy. On stock Humble (GStreamer&nbsp;1.20) the <code>vaapipostproc</code> element is present but fails live validation due to a chroma-subsampling regression, and the Intel iGPU path gracefully falls back to direct mode. In that configuration the win comes from eliminating the <code>image_transport</code> + <code>CameraSubscriber</code> DDS round-trip, not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs and the kernel offload compounds the win.
         </p>
 
         <h3><span class="numeral">2.3</span> What this node is not</h3>
@@ -860,131 +855,7 @@
       <div class="section-body wide">
         <h2>Measurements.</h2>
         <p style="max-width: var(--measure);">
-          All figures below were captured on an Intel desktop running GStreamer&nbsp;1.20 &mdash; a host where <code>vaapipostproc</code> fails validation and the accelerated path falls back to direct mode. The A/B run ran for <b>170&nbsp;seconds</b>, recording <b>2,108</b> legacy and <b>2,109</b> accelerated per-frame latency measurements from an in-callback timestamp, plus <b>170</b> container-CPU and RSS samples polled at 1&nbsp;Hz. The first 10&nbsp;seconds are dropped as warmup.
-        </p>
-        <p style="max-width: var(--measure);">
-          <b>What &ldquo;legacy&rdquo; means here.</b> The legacy path in these numbers is <code>image_proc::ResizeNode</code> loaded into the <em>same</em> <code>ComponentContainer</code> as the upstream publisher, with <code>use_intra_process_comms=true</code>. Both pipelines share the same container process, the same source publisher, and the same source clip; the only variable across the two runs is the identity of the resize node. The configuration is reproducible via <code>launch/A_B_comparison.launch.py</code>.
-        </p>
-
-        <div class="tbl-wrap">
-          <table class="data">
-            <caption><b>Table 1.</b> Per-pipeline measurements &middot; 4K BGR8 &rarr; 640&times;480 &middot; 10 Hz &middot; 170&nbsp;s sustained.</caption>
-            <thead>
-              <tr>
-                <th>Pipeline</th>
-                <th>Architecture</th>
-                <th class="num">Latency median</th>
-                <th class="num">Latency p95</th>
-                <th class="num">CPU mean</th>
-                <th class="num">RSS mean</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="label">image_proc::ResizeNode</td>
-                <td>image_transport + CameraSubscriber</td>
-                <td class="num">12.25 ms</td>
-                <td class="num">21.84 ms</td>
-                <td class="num">64.99 %</td>
-                <td class="num">810.5 MB</td>
-              </tr>
-              <tr class="winner">
-                <td class="label">prism::ResizeNode</td>
-                <td>Intra-process ingest &middot; direct mode</td>
-                <td class="num">4.80 ms</td>
-                <td class="num">14.46 ms</td>
-                <td class="num">55.54 %</td>
-                <td class="num">747.6 MB</td>
-              </tr>
-              <tr>
-                <td class="label" style="color: var(--ink-3); font-weight: 400;">&Delta; (improvement)</td>
-                <td style="color: var(--ink-3);">&mdash;</td>
-                <td class="delta">&minus;7.45 ms</td>
-                <td class="delta">&minus;7.38 ms</td>
-                <td class="delta">&minus;9.4 pp</td>
-                <td class="delta">&minus;63 MB</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="tbl-wrap">
-          <table class="data">
-            <caption><b>Table 2.</b> Full latency distribution (ms) &middot; samples: image_proc n=2,108 &middot; prism_image_proc n=2,109.</caption>
-            <thead>
-              <tr>
-                <th>Pipeline</th>
-                <th class="num">min</th>
-                <th class="num">p5</th>
-                <th class="num">median</th>
-                <th class="num">mean</th>
-                <th class="num">p95</th>
-                <th class="num">p99</th>
-                <th class="num">max</th>
-                <th class="num">&sigma;</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="label">image_proc</td>
-                <td class="num">6.60</td>
-                <td class="num">8.74</td>
-                <td class="num">12.25</td>
-                <td class="num">14.28</td>
-                <td class="num">21.84</td>
-                <td class="num">29.76</td>
-                <td class="num">44.84</td>
-                <td class="num">4.96</td>
-              </tr>
-              <tr class="winner">
-                <td class="label">prism_image_proc</td>
-                <td class="num">1.95</td>
-                <td class="num">2.76</td>
-                <td class="num">4.80</td>
-                <td class="num">7.68</td>
-                <td class="num">14.46</td>
-                <td class="num">24.38</td>
-                <td class="num">39.52</td>
-                <td class="num">5.27</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3><span class="numeral">5.1</span> Per-frame latency distribution</h3>
-        <figure class="figure">
-          <div class="frame">
-            <img src="assets/latency_distribution.svg" alt="Box plot of legacy vs accelerated latency distributions" loading="lazy"/>
-          </div>
-          <figcaption>
-            <b>Figure&nbsp;2.</b> Min, p5, median, p95, and max per pipeline. The p5&ndash;p95 envelope of <code>prism_image_proc</code> sits entirely below the image_proc median; the two distributions barely overlap.
-          </figcaption>
-        </figure>
-
-        <h3><span class="numeral">5.2</span> Latency over time</h3>
-        <figure class="figure">
-          <div class="frame">
-            <img src="assets/latency_timeseries.svg" alt="Per-frame latency trace over the full 170-second run" loading="lazy"/>
-          </div>
-          <figcaption>
-            <b>Figure&nbsp;3.</b> Full trace across the run. Accelerated latency (Venetian red) sits consistently below image_proc (grey). Both traces are stable &mdash; no drift, no backpressure, no frame drops.
-          </figcaption>
-        </figure>
-
-        <h3><span class="numeral">5.3</span> Resource usage</h3>
-        <figure class="figure">
-          <div class="frame">
-            <img src="assets/resource_usage.svg" alt="Bar chart comparing latency median, CPU mean, and RSS mean" loading="lazy"/>
-          </div>
-          <figcaption>
-            <b>Figure&nbsp;4.</b> Median latency, mean container CPU, and mean resident memory. Percentages annotate the improvement <code>prism_image_proc</code> delivers relative to <code>image_proc</code> on each axis.
-          </figcaption>
-        </figure>
-
-        <p style="max-width: var(--measure); margin-top: 20px;">
-          Even in direct-mode fallback &mdash; no GStreamer, no GPU &mdash; the accelerated path wins by eliminating
-          the <code>image_transport</code> + <code>CameraSubscriber</code> round-trip. The intra-process
-          <code>unique_ptr</code> move bypasses both serialisation and DDS.
+          Benchmarks pending re-measurement &mdash; see README.
         </p>
       </div>
     </section>
@@ -1083,7 +954,7 @@
       </div>
       <div>
         <h6>Revision</h6>
-        <p style="margin: 0;" class="lic">2026.04 &middot; 170-second A/B capture</p>
+        <p style="margin: 0;" class="lic">2026.04 &middot; benchmarks pending re-measurement</p>
         <p style="margin: 4px 0 0;">
           <a href="https://github.com/sohams25/prism-ros/commits/main">Changelog &uarr;</a>
         </p>
