@@ -174,6 +174,7 @@ install(PROGRAMS
   scripts/latency_tracker.py
   scripts/cpu_monitor.py
   scripts/visualize_demo.py
+  bench/helpers/cv_bridge_subscriber_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

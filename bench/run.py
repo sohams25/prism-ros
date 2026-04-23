@@ -121,30 +121,57 @@ class CaptureNode(Node):
 
 
 # --------------------------------------------------------------------------
-# Container discovery
+# Process discovery
 # --------------------------------------------------------------------------
-def find_container_pid(container_name, timeout_s=10.0):
-    """Poll psutil for a component_container with container_name in argv."""
+# Per-side cmdline match predicates. A side can match multiple processes
+# (e.g. stock chain = legacy_container + legacy_cvbridge Python). Resource
+# samples are summed across every matched process before being written to
+# the resource CSV, so the stock-side total reflects the full stock graph
+# cost including any out-of-container helper nodes.
+SIDE_MATCHERS = {
+    'stock': [
+        lambda cmd: 'component_container' in cmd and 'legacy_container' in cmd,
+        lambda cmd: 'cv_bridge_subscriber_node.py' in cmd
+                    and '__node:=legacy_cvbridge' in cmd,
+    ],
+    'prism': [
+        lambda cmd: 'component_container' in cmd and 'accel_container' in cmd,
+    ],
+}
+
+
+def find_pids_for_side(side, timeout_s=10.0):
+    """Poll psutil until at least one process matches; return all matches."""
+    matchers = SIDE_MATCHERS[side]
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        pids = []
         for p in psutil.process_iter(['pid', 'cmdline']):
             try:
                 cmd = ' '.join(p.info['cmdline'] or [])
-                if 'component_container' in cmd and container_name in cmd:
-                    return p.info['pid']
+                if any(m(cmd) for m in matchers):
+                    pids.append(p.info['pid'])
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
+        if pids:
+            return pids
         time.sleep(0.25)
-    return None
+    return []
 
 
-def sample_resources(proc, sink):
-    try:
-        cpu = proc.cpu_percent()
-        rss_mb = proc.memory_info().rss / (1024.0 * 1024.0)
-        sink.append((time.time(), cpu, rss_mb))
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
+def sample_side_resources(procs, sink):
+    cpu_total = 0.0
+    rss_total = 0.0
+    alive = []
+    for p in procs:
+        try:
+            cpu_total += p.cpu_percent()
+            rss_total += p.memory_info().rss / (1024.0 * 1024.0)
+            alive.append(p)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    sink.append((time.time(), cpu_total, rss_total))
+    return alive
 
 
 # --------------------------------------------------------------------------
@@ -237,21 +264,23 @@ def main():
 
     start_iso = datetime.now(timezone.utc).isoformat()
 
-    # ---- Find container PIDs (best-effort; may be absent for chain stock). ----
+    # ---- Find all PIDs per side; may be >1 when the stock side has
+    #      out-of-container helper Nodes (colorconvert, chain). ----
     print(f'[run] warmup {args.warmup}s ...', flush=True)
     time.sleep(args.warmup)
 
-    legacy_pid = find_container_pid(LEGACY_CONTAINER, timeout_s=5.0)
-    accel_pid = find_container_pid(ACCEL_CONTAINER, timeout_s=5.0)
-    print(f'[run] legacy_container pid={legacy_pid}  accel_container pid={accel_pid}',
-          flush=True)
+    stock_pids = find_pids_for_side('stock', timeout_s=5.0)
+    prism_pids = find_pids_for_side('prism', timeout_s=5.0)
+    print(f'[run] stock pids={stock_pids}  prism pids={prism_pids}', flush=True)
 
-    legacy_proc = psutil.Process(legacy_pid) if legacy_pid else None
-    accel_proc = psutil.Process(accel_pid) if accel_pid else None
-    if legacy_proc:
-        legacy_proc.cpu_percent()  # prime the running-diff baseline
-    if accel_proc:
-        accel_proc.cpu_percent()
+    stock_procs = [psutil.Process(pid) for pid in stock_pids]
+    prism_procs = [psutil.Process(pid) for pid in prism_pids]
+    # Prime the psutil running-diff baseline before the first sample.
+    for p in stock_procs + prism_procs:
+        try:
+            p.cpu_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
 
     # ---- Start rclpy capture. ----
     rclpy.init()
@@ -266,10 +295,8 @@ def main():
         rclpy.spin_once(node, timeout_sec=0.05)
         now = time.time()
         if now >= next_sample:
-            if legacy_proc:
-                sample_resources(legacy_proc, legacy_resources)
-            if accel_proc:
-                sample_resources(accel_proc, accel_resources)
+            stock_procs = sample_side_resources(stock_procs, legacy_resources)
+            prism_procs = sample_side_resources(prism_procs, accel_resources)
             next_sample = now + 1.0
 
     node.destroy_node()

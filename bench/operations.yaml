@@ -38,8 +38,8 @@ crop:
     crop_height: 1440
   stock_plugin: image_proc::CropDecimateNode
   stock_params:
-    offset_x: 640
-    offset_y: 360
+    x_offset: 640
+    y_offset: 360
     width: 2560
     height: 1440
     decimation_x: 1
@@ -79,8 +79,8 @@ chain:
   stock_equivalent: three_stock_nodes_piped
   stock_params:
     crop:
-      offset_x: 640
-      offset_y: 360
+      x_offset: 640
+      y_offset: 360
       width: 2560
       height: 1440
       decimation_x: 1
