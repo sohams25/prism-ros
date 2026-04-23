@@ -862,6 +862,9 @@
         <p style="max-width: var(--measure);">
           All figures below were captured on an Intel desktop running GStreamer&nbsp;1.20 &mdash; a host where <code>vaapipostproc</code> fails validation and the accelerated path falls back to direct mode. The A/B run ran for <b>170&nbsp;seconds</b>, recording <b>2,108</b> legacy and <b>2,109</b> accelerated per-frame latency measurements from an in-callback timestamp, plus <b>170</b> container-CPU and RSS samples polled at 1&nbsp;Hz. The first 10&nbsp;seconds are dropped as warmup.
         </p>
+        <p style="max-width: var(--measure);">
+          <b>What &ldquo;legacy&rdquo; means here.</b> The legacy path in these numbers is <code>image_proc::ResizeNode</code> loaded into the <em>same</em> <code>ComponentContainer</code> as the upstream publisher, with <code>use_intra_process_comms=true</code>. Both pipelines share the same container process, the same source publisher, and the same source clip; the only variable across the two runs is the identity of the resize node. The configuration is reproducible via <code>launch/A_B_comparison.launch.py</code>.
+        </p>
 
         <div class="tbl-wrap">
           <table class="data">
