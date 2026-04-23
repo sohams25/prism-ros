@@ -82,11 +82,37 @@ above the chain charts.
 `image_proc` has no dedicated colorconvert node. The stock side
 of the colorconvert and chain operations therefore uses
 `bench/helpers/cv_bridge_subscriber_node.py`: a minimal rclpy
-Node that subscribes to an `Image`, calls `cv_bridge.toCvCopy`
-with the target encoding, and re-publishes as an `Image`. This
-is the fairest available approximation of "what a typical ROS 2
-user would write if they needed a standalone colorconvert step
-today," but it is not an official reference implementation.
+Node that subscribes to an `Image`, reshapes the payload with
+NumPy, performs the encoding conversion (bgr8 ↔ rgb8 channel
+reorder or Rec.601 luma reduction to mono8), and re-publishes.
+
+The original design used `cv_bridge::toCvCopy`. On the capture
+machine, `ros-humble-cv-bridge` 3.2.1 is compiled against the
+apt-packaged NumPy 1.x ABI, but `/usr/bin/python3` (Python 3.10,
+the interpreter ROS 2 Humble is built for) resolves `numpy` to a
+user-site install of NumPy 2.2.6 at
+`~/.local/lib/python3.10/site-packages/numpy/` that takes import
+precedence over `/usr/lib/python3/dist-packages/numpy`. On
+subscriber startup this produces the NumPy 1.x/2.x ABI warning
+(`A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.2.6`), `AttributeError: _ARRAY_API not found` on
+`from cv_bridge.boost.cv_bridge_boost import …`, and SIGSEGV on
+the first message delivered to the subscriber. The NumPy baseline
+is what a ROS 2 user writes when `cv_bridge` is unavailable or
+when they want to avoid the import, so it is a realistic stock
+reference — but it is not `cv_bridge`. Readers should note that
+`cv_bridge.imgmsg_to_cv2(desired_encoding=…)` dispatches
+internally to OpenCV's SIMD `cvtColor`, which is substantially
+faster than a NumPy `::-1` + `copy` on large BGR8↔RGB8 frames.
+The Δ% reported here is therefore against a NumPy reference, not
+against an OpenCV reference; a measurement against OpenCV
+`cvtColor` would yield a smaller (but still positive) delta. The
+magnitude of that correction is not measured here. The segfault
+reproduces deterministically: replace the subscriber body with
+`from cv_bridge import CvBridge` +
+`bridge.imgmsg_to_cv2(msg, desired_encoding=target)` +
+`bridge.cv2_to_imgmsg(...)`, rebuild, re-launch, observe
+first-message SIGSEGV on the colorconvert operation.
 
 ## Sources of noise, mitigations
 
@@ -108,6 +134,17 @@ today," but it is not an official reference implementation.
   `MediaStreamerNode` source on each side. That is equal on both
   sides (same source, same rate cap) so the delta is clean,
   but the absolute CPU figures include the source's share.
+- **Source-clip looping.** The drone-footage input used for these
+  captures is shorter than the 120-second run duration, so the
+  clip loops ~6× during a single operation's run. Each frame
+  still enters the pipeline as a fresh publish, so latency
+  per-frame is clean, but microarchitectural effects (branch
+  predictor warmup, cache residency patterns tied to specific
+  frame content) may be slightly biased compared to a
+  non-looping source. The bias is expected to be small relative
+  to the measured deltas. A longer source clip would eliminate
+  this; it's a known limitation of the current capture, not a
+  methodology flaw.
 
 ## How to reproduce
 
