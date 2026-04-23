@@ -1,0 +1,100 @@
+# bench/operations.yaml
+#
+# Declarative description of the four A/B benchmark operations. The
+# launch file and run.py both read this to decide what to instantiate
+# and how to describe the run in metadata.
+#
+# Topology convention (same for every operation):
+#   stock side:     MediaStreamerNode -> /legacy/image_raw
+#                   ... stock processing graph ...
+#                   final publish -> /legacy/image_processed
+#   prism side:     MediaStreamerNode -> /accelerated/image_raw
+#                   prism processing node
+#                   final publish -> /accelerated/image_processed
+#
+# run.py subscribes only to the two /*_processed topics. Everything
+# between input and output is operation-specific.
+
+resize:
+  prism_params:
+    action: resize
+    width: 640
+    height: 480
+  stock_plugin: image_proc::ResizeNode
+  stock_params:
+    use_scale: false
+    width: 640
+    height: 480
+  notes: >
+    Direct one-to-one match against image_proc::ResizeNode. Fairest
+    available comparison: same source, same output size, same subscriber.
+
+crop:
+  prism_params:
+    action: crop
+    crop_x: 640
+    crop_y: 360
+    crop_width: 2560
+    crop_height: 1440
+  stock_plugin: image_proc::CropDecimateNode
+  stock_params:
+    offset_x: 640
+    offset_y: 360
+    width: 2560
+    height: 1440
+    decimation_x: 1
+    decimation_y: 1
+  notes: >
+    image_proc::CropDecimateNode configured with decimation_x=1,
+    decimation_y=1 so it performs a pure crop. Closest available
+    stock equivalent.
+
+colorconvert:
+  prism_params:
+    action: colorconvert
+    target_encoding: rgb8
+  stock_plugin: null
+  stock_equivalent: cv_bridge_subscriber_node
+  stock_params:
+    target_encoding: rgb8
+  notes: >
+    No single stock ROS 2 node performs pure colorconvert as its
+    only job. The A/B uses a minimal cv_bridge subscriber node
+    (bench/helpers/cv_bridge_subscriber_node.py) that does
+    toCvCopy + cvtColor + cv_bridge::toImageMsg with the target
+    encoding. Fairest available approximation; not an official
+    reference.
+
+chain:
+  prism_params:
+    action: crop,resize,colorconvert
+    crop_x: 640
+    crop_y: 360
+    crop_width: 2560
+    crop_height: 1440
+    width: 640
+    height: 480
+    target_encoding: rgb8
+  stock_plugin: chained
+  stock_equivalent: three_stock_nodes_piped
+  stock_params:
+    crop:
+      offset_x: 640
+      offset_y: 360
+      width: 2560
+      height: 1440
+      decimation_x: 1
+      decimation_y: 1
+    resize:
+      use_scale: false
+      width: 640
+      height: 480
+    colorconvert:
+      target_encoding: rgb8
+  notes: >
+    Stock side is three separate nodes piped through DDS topics
+    (CropDecimate -> Resize -> cv_bridge). Prism side is one
+    chained pipeline. The latency delta here reflects Prism's
+    single-pipeline architecture avoiding two intermediate DDS
+    hops — it is NOT a kernel-speed claim. Documented prominently
+    in the README Notes column and in the site Benchmarks section.

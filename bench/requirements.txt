@@ -1,0 +1,4 @@
+matplotlib>=3.5
+numpy>=1.21
+psutil>=5.9
+pyyaml>=6.0
