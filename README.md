@@ -1,7 +1,7 @@
 # Prism
-
 *ROS 2 perception acceleration that picks the right path through your hardware.*
 
+[![CI](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml/badge.svg)](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml)
 [![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-green.svg)](https://docs.ros.org/en/humble/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GStreamer](https://img.shields.io/badge/GStreamer-1.x-orange.svg)](https://gstreamer.freedesktop.org/)
@@ -11,16 +11,183 @@ Hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a *
 
 Same resize parameters. Same output topic. Scaled `CameraInfo` on the paired topic. One-line launch-file swap.
 
+[**Documentation & benchmarks →**](https://sohams25.github.io/prism-ros/)
+
+---
+
+## Quick start
+
+### Prerequisites
+ROS 2 Humble on Ubuntu 22.04. GStreamer 1.20+.
+
+### Install
+```bash
+cd ~/ros2_ws/src
+git clone https://github.com/sohams25/prism-ros.git prism_image_proc
+sudo apt install \
+  ros-humble-image-transport ros-humble-image-proc \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-vaapi
+cd ~/ros2_ws
+colcon build --packages-select prism_image_proc
+source install/setup.bash
+```
+
+### Run the demo
+The demo launch file spins up a single `prism::ResizeNode` inside a component container, subscribed to `/camera/image_raw` and publishing to `/camera/image_processed`. You supply the image source — point a camera driver at `/camera/image_raw`, or run `prism::MediaStreamerNode` / `prism::Synthetic4kPubNode` in a second terminal.
+
+```bash
+ros2 launch prism_image_proc prism_image_proc_demo.launch.py
+```
+
+The resize node logs the selected backend (GPU or direct mode) and publishes processed 640×480 frames on `/camera/image_processed` with scaled `CameraInfo` on the paired topic.
+
+For the full A/B stress test against `image_proc::ResizeNode`, see [A/B comparison launch](#ab-comparison-launch) below.
+
+## Usage
+
+### Drop-in replacement for image_proc::ResizeNode
+
 ```python
 ComposableNode(
     package='prism_image_proc',           # was: 'image_proc'
-    plugin='prism::ResizeNode', # was: 'image_proc::ResizeNode'
+    plugin='prism::ResizeNode',           # was: 'image_proc::ResizeNode'
     name='resize',
     parameters=[{'use_scale': False, 'width': 640, 'height': 480}],
 )
 ```
 
----
+Same resize parameters, same output topic, same `sensor_msgs/Image` on the output. Prism also publishes a scaled `CameraInfo` on the paired topic — check the `publish_camera_info` parameter.
+
+### Action chaining
+
+The chainable base — `prism::ImageProcNode` — accepts a comma- or pipe-separated action chain. Each action has per-backend GStreamer fragment builders (CPU / Intel VA-API / Jetson NVMM) and a corresponding CameraInfo transform so intrinsics track the image.
+
+```python
+ComposableNode(
+    package='prism_image_proc',
+    plugin='prism::ImageProcNode',
+    name='preprocess',
+    parameters=[{
+        'action': 'crop,resize,colorconvert',
+        'crop_x': 320, 'crop_y': 180,
+        'crop_width': 1280, 'crop_height': 720,
+        'width': 640, 'height': 360,
+        'target_encoding': 'rgb8',
+    }],
+)
+```
+
+Supported actions: `resize`, `crop`, `flip`, `colorconvert`.
+
+### A/B comparison launch
+
+`launch/A_B_comparison.launch.py` runs `image_proc::ResizeNode` and `prism::ResizeNode` side-by-side in separate component containers over the same source video, for latency / CPU / RSS comparison.
+
+```bash
+ros2 launch prism_image_proc A_B_comparison.launch.py \
+  video_path:=/path/to/4k_video.mp4
+```
+
+## Components
+
+Registered ROS 2 components:
+
+| Class | Purpose |
+| --- | --- |
+| `prism::ImageProcNode` | Chainable base. Configurable action chain; use directly when you need crop+resize+colorconvert composed. |
+| `prism::ResizeNode` | Thin wrapper pinning `action="resize"`. **Drop-in replacement for `image_proc::ResizeNode`.** |
+| `prism::CropNode` | Thin wrapper pinning `action="crop"`. |
+| `prism::ColorConvertNode` | Thin wrapper pinning `action="colorconvert"`. Target `bgr8` / `rgb8` / `mono8`. |
+
+Test / demo helpers:
+
+| Class | Purpose |
+| --- | --- |
+| `prism::MediaStreamerNode` | Video-file publisher (used by the A/B launch). |
+| `prism::Synthetic4kPubNode` | Synthetic 4K test source. |
+
+Load any of the above into an `rclcpp_components::ComponentContainer` with `use_intra_process_comms: true` to get the zero-copy ingest path.
+
+## Parameters
+
+### Core resize
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `use_scale` | bool | `false` | Scale by factor instead of absolute size |
+| `scale_width`, `scale_height` | double | `1.0` | Scale factors when `use_scale=true` |
+| `width`, `height` | int | `640`, `480` | Output size when `use_scale=false` |
+| `input_topic` | string | `/camera/image_raw` | Source topic |
+| `output_topic` | string | `/camera/image_processed` | Destination topic |
+
+### Action chain
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `action` | string | `resize` | Action chain, comma- or pipe-separated (e.g. `crop,resize,colorconvert`) |
+| `target_encoding` | string | `bgr8` | Only read when chain contains `colorconvert`. One of `bgr8`, `rgb8`, `mono8` |
+| `crop_x`, `crop_y`, `crop_width`, `crop_height` | int | `0` | Only read when chain contains `crop`. Pixel offsets into the source |
+| `flip_method` | string | `none` | Only read when chain contains `flip`. `none`, `horizontal`, or `vertical` |
+
+### Transport
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `input_transport` | string | `raw` | `image_transport` name (`raw`, `compressed`, `theora`, …). `raw` keeps the UniquePtr zero-copy hot path |
+| `publish_camera_info` | bool | `true` | Publish a scaled `CameraInfo` alongside the processed image |
+| `source_width`, `source_height` | int | `3840`, `2160` | Source caps (GPU mode only) |
+
+### Media streamer parameters
+
+`prism::MediaStreamerNode` — video-file publisher used by the A/B launch.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `video_path` | string | `/tmp/test_video.mp4` | Input video file |
+| `loop` | bool | `true` | Restart on EOF |
+| `max_fps` | double | `10.0` | Publish rate cap |
+| `image_topic` | string | `/camera/image_raw` | Image topic |
+| `info_topic` | string | `/camera/camera_info` | CameraInfo topic |
+
+## Architecture
+
+At startup `HardwareDetector` probes `/dev` for accelerator devices and runs `gst-inspect` against the GStreamer registry to confirm the matching elements load. `PipelineFactory` then builds a backend-specific pipeline fragment for each action in the chain, validates the complete pipeline live, and hands it to `ImageProcNode`. If no GPU pipeline validates, the node falls back to a direct `cv::resize` in the subscriber callback — no GStreamer involvement at all.
+
+<!-- Do NOT add %%{init: {'theme': ...}}%% — GitHub's native Mermaid
+     renderer auto-adapts to dark/light mode only when no theme is
+     forced. Forcing a theme breaks the opposite mode. -->
+```mermaid
+flowchart TD
+  Start([Startup]) --> HD[HardwareDetector]
+  HD --> PF[PipelineFactory]
+  PF --> V{gst-inspect validates?}
+  V -->|Jetson path OK| NV[nvvideoconvert / NVMM]
+  V -->|Intel path OK| VA[vapostproc / VA-API]
+  V -->|none valid| CV[cv::resize direct mode]
+  NV --> Out([sensor_msgs/Image out])
+  VA --> Out
+  CV --> Out
+```
+
+### Fallback chain
+
+| Priority | Platform | Detection | Processing |
+|---|---|---|---|
+| 1 | NVIDIA Jetson | `/dev/nvhost-*`, `/dev/nvmap` | GStreamer `nvvideoconvert` (CUDA / NVMM) |
+| 2 | Intel VA-API | `/dev/dri/renderD*` + `vapostproc` in registry | GStreamer `vapostproc` |
+| 3 | CPU (always) | — | Direct `cv::resize` in callback |
+
+The fallback is **live-validated** against the GStreamer plugin registry — an accelerator that's present but broken (for example, the `vaapipostproc` chroma bug on GStreamer 1.20) is skipped, not attempted.
+
+## How it works
+
+### Zero-copy ingest, single-copy egress
+Input arrives via intra-process `UniquePtr` delivery (`raw` `image_transport`) or through an `image_transport::Subscriber` plugin for compressed / theora / ffmpeg encodings. On the `raw` path the pointer is moved — no copy — into a `gst_buffer_new_wrapped_full` that feeds the GStreamer pipeline. Egress (copying the processed frame into a fresh `sensor_msgs/Image` for publication) is a single copy. The claim is zero-copy ingest and no DDS round-trip, not end-to-end zero-copy.
+
+### CameraInfo transforms
+Each registered action carries a `CameraInfoTransform` functor that scales the K / P intrinsics and ROI to match the image output for that action. Chain composition multiplies the transforms in order, so downstream consumers of the paired `CameraInfo` topic see intrinsics that match the processed image — no matter how long the action chain.
 
 ## Positioning / Scope
 
@@ -96,155 +263,27 @@ ros2 launch prism_image_proc A_B_comparison.launch.py \
 Numbers and a short commentary will be added to this section once the
 capture is complete.
 
-## Architecture
+## Development
 
-```
-                Startup
-                   │
-         ┌─────────▼──────────┐
-         │  HardwareDetector  │   probes /dev, runs gst-inspect
-         └─────────┬──────────┘
-                   │
-        ┌──────────▼──────────┐
-        │  PipelineFactory    │   validates gst elements exist & work
-        └──────────┬──────────┘
-                   │
-      ┌────────────┴────────────┐
-      │                         │
-  ┌───▼──────────────┐  ┌───────▼────────────────┐
-  │  GPU mode        │  │  Direct mode           │
-  │  appsrc → GPU    │  │  cv::resize in the     │
-  │  → appsink       │  │  subscriber callback   │
-  │  zero-copy ingest│  │  no GStreamer at all   │
-  └──────────────────┘  └────────────────────────┘
-```
-
-### Fallback chain
-
-| Priority | Platform | Detection | Processing |
-|---|---|---|---|
-| 1 | NVIDIA Jetson | `/dev/nvhost-*`, `/dev/nvmap` | GStreamer `nvvideoconvert` (CUDA / NVMM) |
-| 2 | Intel VA-API | `/dev/dri/renderD*` + `vapostproc` in registry | GStreamer `vapostproc` |
-| 3 | CPU (always) | — | Direct `cv::resize` in callback |
-
-The fallback is **live-validated** against the GStreamer plugin registry — an accelerator that's present but broken (like the `vaapipostproc` chroma bug) is skipped, not attempted.
-
-## Quick Start
-
+### Build and test
 ```bash
-# Clone into a colcon workspace
-cd ~/ros2_ws/src
-git clone https://github.com/sohams25/prism-ros.git prism_image_proc
-
-# Install deps
-sudo apt install ros-humble-image-proc gstreamer1.0-vaapi \
-  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
-pip install flask psutil
-
-# Build
-cd ~/ros2_ws
-colcon build --packages-up-to prism_image_proc
-source install/setup.bash
-
-# Run the A/B stress test (any 4K mp4)
-ros2 launch prism_image_proc A_B_comparison.launch.py \
-  video_path:=/path/to/4k_video.mp4
+colcon build --packages-select prism_image_proc
+colcon test --packages-select prism_image_proc --ctest-args -R test_direct_resize
+colcon test-result --verbose
 ```
 
-The launch file runs two `component_container` processes (one for each pipeline) so CPU and RAM are measured independently. It also auto-cleans stale Fast-DDS SHM locks and orphan processes from prior runs, and disables the Fast-DDS SHM transport in favor of UDPv4 (see `config/fastdds_no_shm.xml`) — this is a known-stable configuration that avoids `RTPS_TRANSPORT_SHM` init errors on machines with leftover `/dev/shm/fastrtps_*` files.
+### Continuous integration
+CI runs on the `ros:humble` container on every push and pull
+request: installs the runtime deps, builds the package, runs
+the gtest suite. See
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-### Web Dashboard
+### Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md). Prism uses
+[Conventional Commits](https://www.conventionalcommits.org/)
+going forward.
 
-In a second terminal:
-
-```bash
-ros2 run prism_image_proc visualize_demo.py
-```
-
-Open <http://localhost:8080>. The dashboard shows:
-
-- **Hero delta card** — how much faster the accelerated path is right now, with a live sparkline
-- **Side-by-side MJPEG streams** — 640×480 at 10 fps, with `Content-Length`-framed multipart so the stream is stable indefinitely (no truncation on JPEG/boundary collisions)
-- **Per-container CPU%, RAM MB, FPS, latency** — stale-PID safe (dead zombie containers are not measured)
-- **Auto-detected hardware badge** — "NVIDIA Jetson", "Intel VA-API", or "CPU fallback · direct cv::resize"
-
-## Parameters
-
-### `prism::ResizeNode`
-
-Matches the `image_proc::ResizeNode` interface.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `use_scale` | bool | `false` | Scale by factor instead of absolute size |
-| `scale_width`, `scale_height` | double | `1.0` | Scale factors when `use_scale=true` |
-| `width`, `height` | int | `640`, `480` | Output size when `use_scale=false` |
-| `input_topic` | string | `/camera/image_raw` | Source topic |
-| `output_topic` | string | `/camera/image_processed` | Destination topic |
-| `source_width`, `source_height` | int | `3840`, `2160` | Source caps (GPU mode only) |
-| `input_transport` | string | `raw` | `image_transport` name (`raw`, `compressed`, `theora`, …). `raw` keeps the UniquePtr zero-copy hot path |
-| `publish_camera_info` | bool | `true` | Publish a scaled `CameraInfo` alongside the processed image |
-| `action` | string | `resize` | Action chain, comma- or pipe-separated (e.g. `crop,resize,colorconvert`) |
-| `target_encoding` | string | `bgr8` | Only read when chain contains `colorconvert`. One of `bgr8`, `rgb8`, `mono8` |
-| `crop_x`, `crop_y`, `crop_width`, `crop_height` | int | `0` | Only read when chain contains `crop`. Pixel offsets into the source |
-| `flip_method` | string | `none` | Only read when chain contains `flip`. `none`, `horizontal`, or `vertical` |
-
-### `prism::MediaStreamerNode`
-
-Video-file publisher used by the A/B launch.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `video_path` | string | `/tmp/test_video.mp4` | Input video file |
-| `loop` | bool | `true` | Restart on EOF |
-| `max_fps` | double | `10.0` | Publish rate cap |
-| `image_topic` | string | `/camera/image_raw` | Image topic |
-| `info_topic` | string | `/camera/camera_info` | CameraInfo topic |
-
-## Components
-
-```
-prism_image_proc
-  prism::ResizeNode         # drop-in image_proc::ResizeNode (resize) + chainable crop/flip/colorconvert
-  prism::MediaStreamerNode  # video-file publisher (bgr8)
-  prism::Synthetic4kPubNode # synthetic 4K test source
-```
-
-Load into any `rclcpp_components::ComponentContainer` with `use_intra_process_comms: true`.
-
-## Project Structure
-
-```
-prism_image_proc/
-├── CMakeLists.txt
-├── package.xml
-├── LICENSE
-├── config/
-│   ├── demo_params.yaml
-│   └── fastdds_no_shm.xml          # UDPv4-only Fast-DDS profile
-├── include/prism_image_proc/          # 5 public headers
-├── launch/
-│   ├── A_B_comparison.launch.py    # two-container A/B stress test
-│   └── prism_image_proc_demo.launch.py
-├── scripts/
-│   ├── dashboard.html              # served by visualize_demo.py
-│   ├── visualize_demo.py           # Flask web dashboard
-│   ├── latency_tracker.py          # per-frame latency logger
-│   ├── cpu_monitor.py
-│   ├── synthetic_4k_pub.py
-│   └── generate_assets.py
-└── src/                             # 6 C++ sources
-```
-
-## Dependencies
-
-- **ROS 2 Humble** on Ubuntu 22.04
-- **GStreamer 1.x** — `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev`
-- **OpenCV 4.x** via `cv_bridge`
-- **Python**: `flask`, `psutil` (dashboard only)
-- **Optional**: `gstreamer1.0-vaapi` (Intel), `ros-humble-image-proc` (A/B comparison)
-
-## Roadmap
+### Roadmap
 
 High-impact items, ranked by effort-to-reward:
 
@@ -296,3 +335,5 @@ Action items for downstream consumers:
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+Release history: [CHANGELOG.md](CHANGELOG.md).
