@@ -1,7 +1,6 @@
 # Prism
 *ROS 2 perception acceleration that picks the right path through your hardware.*
 
-[![CI](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml/badge.svg)](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml)
 [![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-green.svg)](https://docs.ros.org/en/humble/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GStreamer](https://img.shields.io/badge/GStreamer-1.x-orange.svg)](https://gstreamer.freedesktop.org/)
@@ -112,6 +111,9 @@ Load any of the above into an `rclcpp_components::ComponentContainer` with `use_
 
 ## Parameters
 
+<details>
+<summary>Expand full parameter reference</summary>
+
 ### Core resize
 
 | Parameter | Type | Default | Description |
@@ -151,6 +153,8 @@ Load any of the above into an `rclcpp_components::ComponentContainer` with `use_
 | `image_topic` | string | `/camera/image_raw` | Image topic |
 | `info_topic` | string | `/camera/camera_info` | CameraInfo topic |
 
+</details>
+
 ## Architecture
 
 At startup `HardwareDetector` probes `/dev` for accelerator devices and runs `gst-inspect` against the GStreamer registry to confirm the matching elements load. `PipelineFactory` then builds a backend-specific pipeline fragment for each action in the chain, validates the complete pipeline live, and hands it to `ImageProcNode`. If no GPU pipeline validates, the node falls back to a direct `cv::resize` in the subscriber callback — no GStreamer involvement at all.
@@ -183,58 +187,23 @@ The fallback is **live-validated** against the GStreamer plugin registry — an 
 
 ## How it works
 
+<details>
+<summary>Expand internals</summary>
+
 ### Zero-copy ingest, single-copy egress
 Input arrives via intra-process `UniquePtr` delivery (`raw` `image_transport`) or through an `image_transport::Subscriber` plugin for compressed / theora / ffmpeg encodings. On the `raw` path the pointer is moved — no copy — into a `gst_buffer_new_wrapped_full` that feeds the GStreamer pipeline. Egress (copying the processed frame into a fresh `sensor_msgs/Image` for publication) is a single copy. The claim is zero-copy ingest and no DDS round-trip, not end-to-end zero-copy.
 
 ### CameraInfo transforms
 Each registered action carries a `CameraInfoTransform` functor that scales the K / P intrinsics and ROI to match the image output for that action. Chain composition multiplies the transforms in order, so downstream consumers of the paired `CameraInfo` topic see intrinsics that match the processed image — no matter how long the action chain.
 
-## Positioning / Scope
+### Runtime reconfiguration
+Parameters can be changed after the node is running via `add_on_set_parameters_callback`. The callback synchronously validates the proposed action chain against the action registry and parameter constraints; on success, the pipeline rebuild is deferred to a one-shot timer so it doesn't run inside the param callback. Validation failures reject the parameter change without touching the running pipeline.
 
-**Prism is not a NITROS replacement.** It targets the segment of the
-ROS 2 fleet that Isaac ROS does not cover: Intel iGPU, AMD, older Jetson,
-Jetson Orin on Humble, and non-NVIDIA embedded hosts.
+### GStreamer 1.20 Intel caveat
 
-**The ROS 2 hardware-acceleration landscape today:**
+On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present but fails live validation due to a chroma-subsampling regression; the Intel iGPU path falls back to direct `cv::resize` mode. GStreamer 1.22+ (Ubuntu 24.04 / Jazzy) is required for the GPU resize kernel on Intel. NVIDIA Jetson NVMM and the CPU direct path are unaffected.
 
-- **Isaac ROS 4.x** (current branch, `release-4.3`) supports only Jetson Thor
-  (T5000/T4000, Blackwell), x86_64 Ampere-or-newer, and DGX Spark — on ROS 2
-  Jazzy. No Humble support, no non-NVIDIA support.
-  (Source: `nvidia-isaac-ros.github.io/getting_started`.)
-- **Isaac ROS 3.2** is the last branch supporting Jetson Orin (Nano/NX/AGX)
-  and Xavier on ROS 2 Humble.
-- Isaac ROS supports **no non-NVIDIA hardware**.
-- **REP-2007** (type adaptation) and **REP-2009** (type negotiation) are the
-  standard ROS 2 zero-copy mechanism since Humble. NITROS is NVIDIA's
-  implementation. `prism_image_proc` does **not** implement type adaptation —
-  the tradeoff is deliberate: hardware portability across Intel/AMD/Jetson
-  Orin-on-Humble in exchange for giving up GPU-resident data flow between
-  nodes.
-- **ros-gst-bridge** (`github.com/BrettRD/ros-gst-bridge`) provides
-  `rosimagesrc`/`rosimagesink` GStreamer elements and is adjacent prior art.
-  `prism_image_proc` differs by being a ROS 2 component node: one process,
-  intra-process composition, a single parameter surface matching
-  `image_proc::ResizeNode`, live GStreamer-registry validation of detected
-  accelerators, and a dual-mode fallback to `cv::resize` when no usable
-  pipeline validates.
-
-**Principled hardware-stack finding.**
-Hardware acceleration on Intel requires GStreamer 1.22+, i.e. Ubuntu 24.04 /
-Jazzy. On stock Humble (GStreamer 1.20) the `vaapipostproc` element is
-present but fails live validation due to a chroma-subsampling regression,
-and the Intel iGPU path gracefully falls back to direct mode. In that
-configuration the win comes from eliminating the `image_transport` +
-`CameraSubscriber` DDS round-trip, not from a GPU kernel. On Jazzy hosts
-or Jetson hosts, the GPU path runs and the win is compounded by offloading
-the resize kernel.
-
-**What Prism is not:**
-
-- Not a type-adaptation framework. Data crosses the egress boundary as a
-  normal `sensor_msgs/Image`; publishing is a single copy.
-- Not a Jetson Thor or Blackwell target (use Isaac ROS 4.x).
-- Not a replacement for CUDA-resident compute graphs; it is a portable
-  resize node that wins on the hosts Isaac ROS does not serve.
+</details>
 
 ## Benchmarks
 
@@ -278,6 +247,9 @@ request: installs the runtime deps, builds the package, runs
 the gtest suite. See
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
+<details>
+<summary>Contributing & Roadmap</summary>
+
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md). Prism uses
 [Conventional Commits](https://www.conventionalcommits.org/)
@@ -295,6 +267,8 @@ High-impact items, ranked by effort-to-reward:
 - [ ] **Dropped-frame metric** — `appsrc max-buffers` overflow currently silent; expose as a topic
 - [ ] **H.264/H.265 compressed-ingest branch** — keep remote-cam frames on GPU from network → resize
 - [ ] **CI integration tests**
+
+</details>
 
 ## License
 

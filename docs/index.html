@@ -251,12 +251,6 @@
     align-items: center;
   }
   .status-row .dot { color: var(--fg-subtle); }
-  .status-row .ci { color: var(--success); }
-  .status-row .ci::before {
-    content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--success); margin-right: 6px; vertical-align: 1px;
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 18%, transparent);
-  }
 
   /* ───────────────────────────────────────────────────────────────
      "What it is" — two columns
@@ -421,10 +415,8 @@
   }
 
   /* ───────────────────────────────────────────────────────────────
-     Positioning
+     Callout (reused: VAAPI caveat in Architecture)
      ─────────────────────────────────────────────────────────────── */
-  .prose p { font-size: 15px; margin-bottom: 14px; }
-  .prose strong { color: var(--fg); font-weight: 600; }
   .finding {
     margin: 28px 0;
     border: 1px solid var(--border);
@@ -438,14 +430,6 @@
     color: var(--accent); margin-bottom: 10px;
   }
   .finding p { font-size: 14.5px; margin-bottom: 0; }
-  .not-list { list-style: none; padding: 0; margin: 16px 0 0 0; }
-  .not-list li {
-    padding-left: 22px; position: relative;
-    color: var(--fg-muted); font-size: 14.5px; margin-bottom: 8px;
-  }
-  .not-list li::before {
-    content: '—'; position: absolute; left: 0; color: var(--fg-subtle);
-  }
 
   /* ───────────────────────────────────────────────────────────────
      Benchmarks placeholder
@@ -562,7 +546,6 @@
       <a href="#architecture">Architecture</a>
       <a href="#components">Components</a>
       <a href="#parameters">Parameters</a>
-      <a href="#positioning">Positioning</a>
       <a href="https://github.com/sohams25/prism-ros" class="github-link" rel="noopener">GitHub ↗</a>
     </nav>
     <button class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme" title="Toggle theme">
@@ -661,8 +644,6 @@
       <span>Apache-2.0</span>
       <span class="dot">·</span>
       <span>v0.1.0</span>
-      <span class="dot">·</span>
-      <span class="ci">CI passing</span>
     </div>
   </div>
 </section>
@@ -891,6 +872,17 @@ source install/setup.bash</code></pre>
         </tbody>
       </table>
     </div>
+
+    <div class="finding" role="note">
+      <h3>GStreamer 1.20 Intel caveat</h3>
+      <p>
+        On stock ROS 2 Humble (GStreamer 1.20), the <code>vaapipostproc</code> element is
+        present but fails live validation due to a chroma-subsampling regression; the Intel
+        iGPU path falls back to direct <code>cv::resize</code> mode. GStreamer 1.22+
+        (Ubuntu 24.04 / Jazzy) is required for the GPU resize kernel on Intel. NVIDIA Jetson
+        NVMM and the CPU direct path are unaffected.
+      </p>
+    </div>
   </div>
 </section>
 
@@ -1003,60 +995,11 @@ source install/setup.bash</code></pre>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     POSITIONING
-     ═══════════════════════════════════════════════════════════════ -->
-<section id="positioning" aria-labelledby="pos-title">
-  <div class="container">
-    <span class="section-eyebrow">06 — Positioning</span>
-    <h2 class="section-title" id="pos-title">Where Prism sits in the ecosystem</h2>
-    <div class="prose">
-      <p>
-        <strong>Isaac ROS 4.x</strong> supports only Jetson Thor, Ampere+ discrete GPUs, and
-        DGX Spark on ROS 2 Jazzy. There is no Humble support and no non-NVIDIA hardware support.
-      </p>
-      <p>
-        <strong>Isaac ROS 3.2</strong> is the last branch that supports Jetson Orin on Humble.
-        Even there, Isaac ROS supports no non-NVIDIA hardware at all.
-      </p>
-      <p>
-        <strong>REP-2007</strong> (type adaptation) and <strong>REP-2009</strong> (type
-        negotiation) are the standard ROS 2 zero-copy mechanism, available since Humble.
-        <strong>NITROS</strong> is NVIDIA's implementation of that contract. Prism does not
-        implement type adaptation — that's a deliberate tradeoff for hardware portability.
-      </p>
-      <p>
-        <a href="https://github.com/BrettRD/ros-gst-bridge" rel="noopener">ros-gst-bridge</a>
-        is adjacent prior art. Prism differs by being a ROS 2 component node with
-        live-validated backend selection, not a generic bridge.
-      </p>
-    </div>
-
-    <div class="finding" role="note">
-      <h3>Principled hardware-stack finding</h3>
-      <p>
-        Hardware acceleration on Intel requires GStreamer 1.22+ (Ubuntu 24.04 / Jazzy). On
-        stock Humble (GStreamer 1.20) the <code>vaapipostproc</code> element is present but
-        fails live validation due to a chroma-subsampling regression; the Intel iGPU path
-        gracefully falls back to direct mode. The upcoming benchmarks will quantify this.
-      </p>
-    </div>
-
-    <h3 class="sub-title">What Prism is not</h3>
-    <ul class="not-list">
-      <li>Not a type-adaptation framework. REP-2007/2009 and NITROS already occupy that space.</li>
-      <li>Not a rewrite of <code>image_proc</code>. It's a drop-in resize-pipeline replacement with a wider chain.</li>
-      <li>Not a GStreamer-to-ROS bridge. It's a ROS 2 component that happens to dispatch to GStreamer when useful.</li>
-      <li>Not NVIDIA-only. Intel VA-API and CPU fallbacks are first-class paths.</li>
-    </ul>
-  </div>
-</section>
-
-<!-- ═══════════════════════════════════════════════════════════════
      BENCHMARKS
      ═══════════════════════════════════════════════════════════════ -->
 <section id="benchmarks" aria-labelledby="bench-title">
   <div class="container">
-    <span class="section-eyebrow">07 — Benchmarks</span>
+    <span class="section-eyebrow">06 — Benchmarks</span>
     <h2 class="section-title" id="bench-title">Benchmarks</h2>
     <div class="bench">
       <div class="label">Re-measurement in progress</div>
