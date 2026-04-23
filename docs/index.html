@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GstAdaptNode — Hardware-agnostic ROS 2 perception acceleration</title>
-  <meta name="description" content="A drop-in replacement for image_proc::ResizeNode that probes /dev/ at startup, validates against the GStreamer registry, and selects the fastest viable backend." />
+  <title>Prism — ROS 2 perception acceleration that picks the right path through your hardware</title>
+  <meta name="description" content="A drop-in replacement for image_proc::ResizeNode's resize pipeline — same parameters, scaled CameraInfo, and chainable crop/flip/colorconvert — that probes /dev/ at startup, validates against the GStreamer registry, and selects the fastest viable backend. Targets the ROS 2 fleet Isaac ROS does not cover." />
   <meta name="author" content="Soham Shinde" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -661,15 +661,16 @@
           <rect x="1" y="10" width="7" height="7" rx="1" fill="#8F2D11" fill-opacity="0.25"/>
           <rect x="10" y="10" width="7" height="7" rx="1" stroke="#73706A" stroke-width="1.2"/>
         </svg>
-        GstAdaptNode
+        Prism
       </a>
       <nav class="links" aria-label="Sections">
         <a href="#motivation">&sect;1 Motivation</a>
-        <a href="#architecture">&sect;2 Architecture</a>
-        <a href="#interface">&sect;3 Interface</a>
-        <a href="#measurements">&sect;4 Measurements</a>
-        <a href="#platforms">&sect;5 Platforms</a>
-        <a href="https://github.com/sohams25/GstAdaptNode">Repository &uarr;</a>
+        <a href="#positioning">&sect;2 Positioning</a>
+        <a href="#architecture">&sect;3 Architecture</a>
+        <a href="#interface">&sect;4 Interface</a>
+        <a href="#measurements">&sect;5 Measurements</a>
+        <a href="#platforms">&sect;6 Platforms</a>
+        <a href="https://github.com/sohams25/prism-ros">Repository &uarr;</a>
       </nav>
     </div>
 
@@ -678,13 +679,13 @@
       <div>
         <h1>Hardware-agnostic<br/>ROS&nbsp;2 <em>perception acceleration</em>.</h1>
         <p class="deck">
-          A drop-in replacement for <code>image_proc::ResizeNode</code> that picks the fastest available backend at runtime. Zero-copy intra-process. No configuration required.
+          A drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline &mdash; same parameters, scaled <code>CameraInfo</code> &mdash; with chainable <code>crop</code>, <code>flip</code>, and <code>colorconvert</code> in a single node. Picks the fastest available backend at runtime. <em>Zero-copy intra-process ingest; single-copy egress; no DDS round-trip.</em>
         </p>
       </div>
       <aside class="meta">
         <h6>Revision 2026.04</h6>
         <dl>
-          <dt>Project</dt><dd>gst_adapt_node</dd>
+          <dt>Project</dt><dd>prism_image_proc</dd>
           <dt>Author</dt><dd>Soham Shinde</dd>
           <dt>License</dt><dd>Apache-2.0</dd>
           <dt>Language</dt><dd>C++17, Python 3</dd>
@@ -718,11 +719,12 @@
       <h6>Contents</h6>
       <ol>
         <li><a href="#motivation">Motivation</a><span class="leader"></span><span class="page">1</span></li>
-        <li><a href="#architecture">Architecture</a><span class="leader"></span><span class="page">2</span></li>
-        <li><a href="#interface">Interface</a><span class="leader"></span><span class="page">3</span></li>
-        <li><a href="#measurements">Measurements</a><span class="leader"></span><span class="page">4</span></li>
-        <li><a href="#platforms">Platforms</a><span class="leader"></span><span class="page">5</span></li>
-        <li><a href="#setup">Setup</a><span class="leader"></span><span class="page">6</span></li>
+        <li><a href="#positioning">Positioning</a><span class="leader"></span><span class="page">2</span></li>
+        <li><a href="#architecture">Architecture</a><span class="leader"></span><span class="page">3</span></li>
+        <li><a href="#interface">Interface</a><span class="leader"></span><span class="page">4</span></li>
+        <li><a href="#measurements">Measurements</a><span class="leader"></span><span class="page">5</span></li>
+        <li><a href="#platforms">Platforms</a><span class="leader"></span><span class="page">6</span></li>
+        <li><a href="#setup">Setup</a><span class="leader"></span><span class="page">7</span></li>
       </ol>
     </nav>
 
@@ -735,7 +737,7 @@
           Hardware accelerators for image operations are abundant on modern robotics hosts &mdash; every Jetson has NVMM, every recent Intel SoC has VA-API, and most deploy targets ship with some working GStreamer pipeline. The problem is not availability; it is the cost of using them. A node that depends on a specific backend ties the node to a specific platform, and a node that tries to detect backends at build time loses to the first host that doesn't match the build assumption.
         </p>
         <p>
-          <code>gst_adapt_node::ResizeNode</code> takes the opposite approach: it probes the host at startup, validates against the live GStreamer registry, and lets the fastest <em>actually-working</em> backend win. When nothing works, it still beats <code>image_proc</code> by eliminating the <code>image_transport</code> round-trip through a direct intra-process callback.
+          <code>prism::ResizeNode</code> takes the opposite approach: it probes the host at startup, validates against the live GStreamer registry, and lets the fastest <em>actually-working</em> backend win. When nothing works, it still beats <code>image_proc</code> by eliminating the <code>image_transport</code> round-trip through a direct intra-process callback.
         </p>
 
         <h3><span class="numeral">1.1</span> Hardware auto-detection</h3>
@@ -743,9 +745,9 @@
           Startup probes <code>/dev/nvhost-*</code>, <code>/dev/nvmap</code>, and <code>/dev/dri/renderD*</code> to identify present accelerators. A second pass calls <code>gst_element_factory_find</code> to confirm the relevant GStreamer elements are registered and instantiable. Broken accelerators &mdash; such as <code>vaapipostproc</code> on GStreamer 1.20 with its chroma-subsampling regression &mdash; are <em>skipped, not attempted</em>.
         </p>
 
-        <h3><span class="numeral">1.2</span> Zero-copy hot path</h3>
+        <h3><span class="numeral">1.2</span> Hot path: zero-copy ingest, single-copy egress</h3>
         <p>
-          The subscriber receives a <code>unique_ptr&lt;sensor_msgs::msg::Image&gt;</code> via intra-process transport. A custom <code>appsrc</code> wrapper takes ownership of the underlying buffer via <code>gst_buffer_new_wrapped_full</code> with a <code>GDestroyNotify</code> hooked into the ROS message destructor, moving the pointer &mdash; not the pixels &mdash; into the GStreamer pipeline.
+          The subscriber receives a <code>unique_ptr&lt;sensor_msgs::msg::Image&gt;</code> via intra-process transport. A custom <code>appsrc</code> wrapper takes ownership of the underlying buffer via <code>gst_buffer_new_wrapped_full</code> with a <code>GDestroyNotify</code> hooked into the ROS message destructor, moving the pointer &mdash; not the pixels &mdash; into the GStreamer pipeline. On the way out, the pipeline emits a fresh BGR buffer which is copied into the outgoing <code>sensor_msgs/Image</code> payload: a single copy at egress, and no DDS round-trip.
         </p>
 
         <h3><span class="numeral">1.3</span> Dual-mode fallback</h3>
@@ -755,9 +757,41 @@
       </div>
     </section>
 
-    <!-- ─────────── §2 Architecture ─────────── -->
-    <section class="body" id="architecture">
+    <!-- ─────────── §2 Positioning ─────────── -->
+    <section class="body" id="positioning">
       <div class="section-no">&sect;2</div>
+      <div class="section-body">
+        <h2>Positioning.</h2>
+        <p>
+          <code>prism_image_proc</code> is not a NITROS replacement. It targets the segment of the ROS&nbsp;2 fleet that Isaac ROS does not cover: Intel iGPU, AMD, older Jetson, Jetson Orin on Humble, and non-NVIDIA embedded hosts. The choice is to trade GPU-resident data flow between nodes for portability across hardware that the vendor-supported path excludes.
+        </p>
+
+        <h3><span class="numeral">2.1</span> The ROS&nbsp;2 acceleration landscape</h3>
+        <p>
+          <b>Isaac ROS 4.x</b> (current <code>release-4.3</code>) supports only Jetson Thor (T5000/T4000, Blackwell), x86_64 Ampere-or-newer, and DGX Spark &mdash; on ROS&nbsp;2 Jazzy. <b>Isaac ROS 3.2</b> is the last branch supporting Jetson Orin (Nano/NX/AGX) and Xavier on ROS&nbsp;2 Humble. Isaac ROS supports no non-NVIDIA hardware.
+        </p>
+        <p>
+          <b>REP-2007</b> (type adaptation) and <b>REP-2009</b> (type negotiation) are the standard ROS&nbsp;2 zero-copy mechanism since Humble; NITROS is NVIDIA's implementation. <code>prism_image_proc</code> does <em>not</em> implement type adaptation. The design decision is deliberate: a resize node that composes into any existing ROS&nbsp;2 launch file on Intel, AMD, or Orin-on-Humble is worth more than a GPU-resident one that only runs where Isaac ROS already ships.
+        </p>
+        <p>
+          <b>ros-gst-bridge</b> (<code>github.com/BrettRD/ros-gst-bridge</code>) provides <code>rosimagesrc</code>/<code>rosimagesink</code> GStreamer elements and is adjacent prior art. <code>prism_image_proc</code> differs by being a ROS&nbsp;2 component node with a single parameter surface matching <code>image_proc::ResizeNode</code>, live GStreamer-registry validation of detected accelerators, and a dual-mode fallback to <code>cv::resize</code> when no pipeline validates.
+        </p>
+
+        <h3><span class="numeral">2.2</span> A principled hardware-stack finding</h3>
+        <p>
+          Hardware acceleration on Intel requires GStreamer&nbsp;1.22+, i.e.&nbsp;Ubuntu&nbsp;24.04 / Jazzy. On stock Humble (GStreamer&nbsp;1.20) the <code>vaapipostproc</code> element is present but fails live validation due to a chroma-subsampling regression, and the Intel iGPU path gracefully falls back to direct mode. The headline numbers in &sect;5 were captured in exactly that configuration: the win comes from eliminating the <code>image_transport</code> + <code>CameraSubscriber</code> DDS round-trip, not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs and the kernel offload compounds the win.
+        </p>
+
+        <h3><span class="numeral">2.3</span> What this node is not</h3>
+        <p>
+          Not a type-adaptation framework &mdash; data crosses the egress boundary as a normal <code>sensor_msgs/Image</code> and publishing is a single copy. Not a Jetson&nbsp;Thor or Blackwell target (use Isaac ROS 4.x). Not a replacement for CUDA-resident compute graphs. It is a portable resize node that wins on the hosts Isaac ROS does not serve.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─────────── §3 Architecture ─────────── -->
+    <section class="body" id="architecture">
+      <div class="section-no">&sect;3</div>
       <div class="section-body wide">
         <h2>Architecture.</h2>
         <p>
@@ -786,15 +820,15 @@
 
         <figcaption style="font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); padding-top: 4px;">
           <b>Figure&nbsp;1.</b> Runtime decision flow. The validate stage is what distinguishes
-          <code>gst_adapt_node</code> from na&iuml;ve auto-detect libraries: elements that probe positive
+          <code>prism_image_proc</code> from na&iuml;ve auto-detect libraries: elements that probe positive
           but fail <code>gst_element_factory_find</code> are discarded before pipeline construction.
         </figcaption>
       </div>
     </section>
 
-    <!-- ─────────── §3 Interface ─────────── -->
+    <!-- ─────────── §4 Interface ─────────── -->
     <section class="body" id="interface">
-      <div class="section-no">&sect;3</div>
+      <div class="section-no">&sect;4</div>
       <div class="section-body wide">
         <h2>Interface.</h2>
         <p style="max-width: var(--measure);">
@@ -806,7 +840,7 @@
             <span>Unified diff &middot; launch file composable node entry</span>
             <span class="path">launch/A_B_comparison.launch.py</span>
           </div>
-          <pre class="diff"><span class="ln"><span class="num">1</span><span class="sig">  </span><span class="txt"> ComposableNode(</span></span><span class="ln del"><span class="num">2</span><span class="sig">- </span><span class="txt">     package='image_proc',</span></span><span class="ln del"><span class="num">3</span><span class="sig">- </span><span class="txt">     plugin='image_proc::ResizeNode',</span></span><span class="ln add"><span class="num">2</span><span class="sig">+ </span><span class="txt">     package='gst_adapt_node',</span></span><span class="ln add"><span class="num">3</span><span class="sig">+ </span><span class="txt">     plugin='gst_adapt_node::ResizeNode',</span></span><span class="ln"><span class="num">4</span><span class="sig">  </span><span class="txt">     name='resize',</span></span><span class="ln"><span class="num">5</span><span class="sig">  </span><span class="txt">     parameters=[{</span></span><span class="ln"><span class="num">6</span><span class="sig">  </span><span class="txt">         'use_scale': False,</span></span><span class="ln"><span class="num">7</span><span class="sig">  </span><span class="txt">         'height':    480,</span></span><span class="ln"><span class="num">8</span><span class="sig">  </span><span class="txt">         'width':     640,</span></span><span class="ln"><span class="num">9</span><span class="sig">  </span><span class="txt">     }],</span></span><span class="ln"><span class="num">10</span><span class="sig">  </span><span class="txt"> )</span></span></pre>
+          <pre class="diff"><span class="ln"><span class="num">1</span><span class="sig">  </span><span class="txt"> ComposableNode(</span></span><span class="ln del"><span class="num">2</span><span class="sig">- </span><span class="txt">     package='image_proc',</span></span><span class="ln del"><span class="num">3</span><span class="sig">- </span><span class="txt">     plugin='image_proc::ResizeNode',</span></span><span class="ln add"><span class="num">2</span><span class="sig">+ </span><span class="txt">     package='prism_image_proc',</span></span><span class="ln add"><span class="num">3</span><span class="sig">+ </span><span class="txt">     plugin='prism::ResizeNode',</span></span><span class="ln"><span class="num">4</span><span class="sig">  </span><span class="txt">     name='resize',</span></span><span class="ln"><span class="num">5</span><span class="sig">  </span><span class="txt">     parameters=[{</span></span><span class="ln"><span class="num">6</span><span class="sig">  </span><span class="txt">         'use_scale': False,</span></span><span class="ln"><span class="num">7</span><span class="sig">  </span><span class="txt">         'height':    480,</span></span><span class="ln"><span class="num">8</span><span class="sig">  </span><span class="txt">         'width':     640,</span></span><span class="ln"><span class="num">9</span><span class="sig">  </span><span class="txt">     }],</span></span><span class="ln"><span class="num">10</span><span class="sig">  </span><span class="txt"> )</span></span></pre>
           <div class="diff-caption">
             Two strings change. The <code>parameters</code> block is parsed by an identical schema on both sides.
           </div>
@@ -820,9 +854,9 @@
       </div>
     </section>
 
-    <!-- ─────────── §4 Measurements ─────────── -->
+    <!-- ─────────── §5 Measurements ─────────── -->
     <section class="body" id="measurements">
-      <div class="section-no">&sect;4</div>
+      <div class="section-no">&sect;5</div>
       <div class="section-body wide">
         <h2>Measurements.</h2>
         <p style="max-width: var(--measure);">
@@ -852,8 +886,8 @@
                 <td class="num">810.5 MB</td>
               </tr>
               <tr class="winner">
-                <td class="label">gst_adapt_node::ResizeNode</td>
-                <td>Zero-copy intra-process &middot; direct mode</td>
+                <td class="label">prism::ResizeNode</td>
+                <td>Intra-process ingest &middot; direct mode</td>
                 <td class="num">4.80 ms</td>
                 <td class="num">14.46 ms</td>
                 <td class="num">55.54 %</td>
@@ -873,7 +907,7 @@
 
         <div class="tbl-wrap">
           <table class="data">
-            <caption><b>Table 2.</b> Full latency distribution (ms) &middot; samples: image_proc n=2,108 &middot; gst_adapt_node n=2,109.</caption>
+            <caption><b>Table 2.</b> Full latency distribution (ms) &middot; samples: image_proc n=2,108 &middot; prism_image_proc n=2,109.</caption>
             <thead>
               <tr>
                 <th>Pipeline</th>
@@ -900,7 +934,7 @@
                 <td class="num">4.96</td>
               </tr>
               <tr class="winner">
-                <td class="label">gst_adapt_node</td>
+                <td class="label">prism_image_proc</td>
                 <td class="num">1.95</td>
                 <td class="num">2.76</td>
                 <td class="num">4.80</td>
@@ -914,17 +948,17 @@
           </table>
         </div>
 
-        <h3><span class="numeral">4.1</span> Per-frame latency distribution</h3>
+        <h3><span class="numeral">5.1</span> Per-frame latency distribution</h3>
         <figure class="figure">
           <div class="frame">
             <img src="assets/latency_distribution.svg" alt="Box plot of legacy vs accelerated latency distributions" loading="lazy"/>
           </div>
           <figcaption>
-            <b>Figure&nbsp;2.</b> Min, p5, median, p95, and max per pipeline. The p5&ndash;p95 envelope of <code>gst_adapt_node</code> sits entirely below the image_proc median; the two distributions barely overlap.
+            <b>Figure&nbsp;2.</b> Min, p5, median, p95, and max per pipeline. The p5&ndash;p95 envelope of <code>prism_image_proc</code> sits entirely below the image_proc median; the two distributions barely overlap.
           </figcaption>
         </figure>
 
-        <h3><span class="numeral">4.2</span> Latency over time</h3>
+        <h3><span class="numeral">5.2</span> Latency over time</h3>
         <figure class="figure">
           <div class="frame">
             <img src="assets/latency_timeseries.svg" alt="Per-frame latency trace over the full 170-second run" loading="lazy"/>
@@ -934,13 +968,13 @@
           </figcaption>
         </figure>
 
-        <h3><span class="numeral">4.3</span> Resource usage</h3>
+        <h3><span class="numeral">5.3</span> Resource usage</h3>
         <figure class="figure">
           <div class="frame">
             <img src="assets/resource_usage.svg" alt="Bar chart comparing latency median, CPU mean, and RSS mean" loading="lazy"/>
           </div>
           <figcaption>
-            <b>Figure&nbsp;4.</b> Median latency, mean container CPU, and mean resident memory. Percentages annotate the improvement <code>gst_adapt_node</code> delivers relative to <code>image_proc</code> on each axis.
+            <b>Figure&nbsp;4.</b> Median latency, mean container CPU, and mean resident memory. Percentages annotate the improvement <code>prism_image_proc</code> delivers relative to <code>image_proc</code> on each axis.
           </figcaption>
         </figure>
 
@@ -952,9 +986,9 @@
       </div>
     </section>
 
-    <!-- ─────────── §5 Platforms ─────────── -->
+    <!-- ─────────── §6 Platforms ─────────── -->
     <section class="body" id="platforms">
-      <div class="section-no">&sect;5</div>
+      <div class="section-no">&sect;6</div>
       <div class="section-body wide">
         <h2>Platforms.</h2>
         <p style="max-width: var(--measure);">
@@ -984,9 +1018,9 @@
       </div>
     </section>
 
-    <!-- ─────────── §6 Setup ─────────── -->
+    <!-- ─────────── §7 Setup ─────────── -->
     <section class="body" id="setup">
-      <div class="section-no">&sect;6</div>
+      <div class="section-no">&sect;7</div>
       <div class="section-body wide">
         <h2>Setup.</h2>
         <p style="max-width: var(--measure);">
@@ -1001,7 +1035,7 @@
           </div>
 <pre><span class="hash"># Clone into a colcon workspace</span>
 <span class="cmd">cd</span> ~/ros2_ws/src
-<span class="cmd">git</span> clone --recursive https://github.com/sohams25/GstAdaptNode.git gst_adapt_node
+<span class="cmd">git</span> clone https://github.com/sohams25/prism-ros.git prism_image_proc
 
 <span class="hash"># Install dependencies</span>
 <span class="cmd">sudo apt install</span> ros-humble-image-proc gstreamer1.0-vaapi \
@@ -1009,15 +1043,15 @@
 <span class="cmd">pip install</span> flask psutil
 
 <span class="hash"># Build</span>
-<span class="cmd">cd</span> ~/ros2_ws &amp;&amp; <span class="cmd">colcon build</span> --packages-up-to gst_adapt_node
+<span class="cmd">cd</span> ~/ros2_ws &amp;&amp; <span class="cmd">colcon build</span> --packages-up-to prism_image_proc
 <span class="cmd">source</span> install/setup.bash
 
 <span class="hash"># Launch A/B stress test with any 4K mp4</span>
-<span class="cmd">ros2 launch</span> gst_adapt_node A_B_comparison.launch.py \
+<span class="cmd">ros2 launch</span> prism_image_proc A_B_comparison.launch.py \
   video_path:=/path/to/4k.mp4
 
 <span class="hash"># In a second terminal — dashboard at http://localhost:8080</span>
-<span class="cmd">ros2 run</span> gst_adapt_node visualize_demo.py</pre>
+<span class="cmd">ros2 run</span> prism_image_proc visualize_demo.py</pre>
         </div>
 
         <p class="marginalia" style="max-width: var(--measure); margin-top: 14px;">
@@ -1033,7 +1067,7 @@
       <div>
         <h6>Repository</h6>
         <p style="margin: 0 0 4px;">
-          <a href="https://github.com/sohams25/GstAdaptNode">github.com/sohams25/GstAdaptNode</a>
+          <a href="https://github.com/sohams25/prism-ros">github.com/sohams25/prism-ros</a>
         </p>
         <p style="margin: 0;" class="lic">Apache-2.0 &middot; C++17 &middot; ROS 2 Humble</p>
       </div>
@@ -1048,7 +1082,7 @@
         <h6>Revision</h6>
         <p style="margin: 0;" class="lic">2026.04 &middot; 170-second A/B capture</p>
         <p style="margin: 4px 0 0;">
-          <a href="https://github.com/sohams25/GstAdaptNode/commits/main">Changelog &uarr;</a>
+          <a href="https://github.com/sohams25/prism-ros/commits/main">Changelog &uarr;</a>
         </p>
       </div>
     </footer>

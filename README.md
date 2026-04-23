@@ -1,18 +1,20 @@
-# GstAdaptNode
+# Prism
+
+*ROS 2 perception acceleration that picks the right path through your hardware.*
 
 [![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-green.svg)](https://docs.ros.org/en/humble/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![GStreamer](https://img.shields.io/badge/GStreamer-1.x-orange.svg)](https://gstreamer.freedesktop.org/)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 
-Hardware-agnostic ROS 2 image-processing accelerator. `gst_adapt_node::ResizeNode` is a **drop-in replacement for `image_proc::ResizeNode`** that auto-detects host accelerators at runtime and chooses the fastest available backend — a zero-copy GStreamer pipeline on supported GPUs, or a direct `cv::resize` callback when no usable GPU path is present.
+Hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a **drop-in replacement for `image_proc::ResizeNode`'s resize pipeline** — same parameters, same Image output, with a scaled `CameraInfo` on the matching topic — that auto-detects host accelerators at runtime and chooses the fastest available backend: a GStreamer pipeline with **zero-copy intra-process ingest** on supported GPUs, or a direct `cv::resize` callback when no usable GPU path is present. Egress to the outgoing `sensor_msgs/Image` is a single copy; the claim is *zero-copy ingest, no DDS round-trip*, not end-to-end zero-copy. Input honours `image_transport` (default `raw`; compressed transports decode before GStreamer ingest).
 
-Same parameters. Same topics. One-line launch-file swap.
+Same resize parameters. Same output topic. Scaled `CameraInfo` on the paired topic. One-line launch-file swap.
 
 ```python
 ComposableNode(
-    package='gst_adapt_node',           # was: 'image_proc'
-    plugin='gst_adapt_node::ResizeNode', # was: 'image_proc::ResizeNode'
+    package='prism_image_proc',           # was: 'image_proc'
+    plugin='prism::ResizeNode', # was: 'image_proc::ResizeNode'
     name='resize',
     parameters=[{'use_scale': False, 'width': 640, 'height': 480}],
 )
@@ -20,11 +22,58 @@ ComposableNode(
 
 ---
 
+## Positioning / Scope
+
+**Prism is not a NITROS replacement.** It targets the segment of the
+ROS 2 fleet that Isaac ROS does not cover: Intel iGPU, AMD, older Jetson,
+Jetson Orin on Humble, and non-NVIDIA embedded hosts.
+
+**The ROS 2 hardware-acceleration landscape today:**
+
+- **Isaac ROS 4.x** (current branch, `release-4.3`) supports only Jetson Thor
+  (T5000/T4000, Blackwell), x86_64 Ampere-or-newer, and DGX Spark — on ROS 2
+  Jazzy. No Humble support, no non-NVIDIA support.
+  (Source: `nvidia-isaac-ros.github.io/getting_started`.)
+- **Isaac ROS 3.2** is the last branch supporting Jetson Orin (Nano/NX/AGX)
+  and Xavier on ROS 2 Humble.
+- Isaac ROS supports **no non-NVIDIA hardware**.
+- **REP-2007** (type adaptation) and **REP-2009** (type negotiation) are the
+  standard ROS 2 zero-copy mechanism since Humble. NITROS is NVIDIA's
+  implementation. `prism_image_proc` does **not** implement type adaptation —
+  the tradeoff is deliberate: hardware portability across Intel/AMD/Jetson
+  Orin-on-Humble in exchange for giving up GPU-resident data flow between
+  nodes.
+- **ros-gst-bridge** (`github.com/BrettRD/ros-gst-bridge`) provides
+  `rosimagesrc`/`rosimagesink` GStreamer elements and is adjacent prior art.
+  `prism_image_proc` differs by being a ROS 2 component node: one process,
+  intra-process composition, a single parameter surface matching
+  `image_proc::ResizeNode`, live GStreamer-registry validation of detected
+  accelerators, and a dual-mode fallback to `cv::resize` when no usable
+  pipeline validates.
+
+**Principled hardware-stack finding.**
+Hardware acceleration on Intel requires GStreamer 1.22+, i.e. Ubuntu 24.04 /
+Jazzy. On stock Humble (GStreamer 1.20) the `vaapipostproc` element is
+present but fails live validation due to a chroma-subsampling regression,
+and the Intel iGPU path gracefully falls back to direct mode. The headline
+numbers below were captured in exactly that configuration — the win comes
+from eliminating the `image_transport` + `CameraSubscriber` DDS round-trip,
+not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs
+and the win is compounded by offloading the resize kernel.
+
+**What Prism is not:**
+
+- Not a type-adaptation framework. Data crosses the egress boundary as a
+  normal `sensor_msgs/Image`; publishing is a single copy.
+- Not a Jetson Thor or Blackwell target (use Isaac ROS 4.x).
+- Not a replacement for CUDA-resident compute graphs; it is a portable
+  resize node that wins on the hosts Isaac ROS does not serve.
+
 ## Current Benchmark
 
 Measured over a **~170-second sustained A/B run** on an Intel desktop, GStreamer 1.20, direct-mode fallback. 4K (3840×2160) BGR8 source → 640×480 at 10 Hz. 2108 legacy + 2109 accel per-frame latency records; 170 samples of CPU / RSS at 1 Hz. First 10 s dropped as warmup.
 
-| Metric | `image_proc::ResizeNode` | `gst_adapt_node::ResizeNode` | Delta |
+| Metric | `image_proc::ResizeNode` | `prism::ResizeNode` | Delta |
 |---|---|---|---|
 | **Latency — median** | 12.25 ms | **4.80 ms** | **7.45 ms faster** (60.8 %) |
 | **Latency — mean** | 14.28 ms | **7.68 ms** | **6.60 ms faster** (46.2 %) |
@@ -50,6 +99,21 @@ Measured over a **~170-second sustained A/B run** on an Intel desktop, GStreamer
 
 On this host the GPU path is skipped because GStreamer 1.20's `vaapipostproc` has a chroma-loss bug (Y plane only). The node detects it, falls back to direct mode, and **still wins by 7.4 ms at the median** because it eliminates the `image_transport` + `CameraSubscriber` DDS round-trip entirely. On hosts with a working GPU (NVIDIA Jetson `nvvideoconvert`, or Intel on GStreamer 1.22+ with `vapostproc`), the accelerated path additionally offloads the resize kernel to dedicated silicon and frees CPU for SLAM / perception / planning.
 
+### Jetson (Orin) — pending
+
+The GPU path is implemented for Jetson via `nvvideoconvert` with NVMM
+buffer-types, and the fallback chain promotes it first when
+`/dev/nvhost-*` and `/dev/nvmap` probe positive. A 60-second A/B
+capture on Orin (Nano / NX / AGX) is pending — reproduce with:
+
+```bash
+ros2 launch prism_image_proc A_B_comparison.launch.py \
+  video_path:=/path/to/4k_video.mp4
+```
+
+Numbers and a short commentary will be added to this section once the
+capture is complete.
+
 ## Architecture
 
 ```
@@ -69,7 +133,7 @@ On this host the GPU path is skipped because GStreamer 1.20's `vaapipostproc` ha
   │  GPU mode        │  │  Direct mode           │
   │  appsrc → GPU    │  │  cv::resize in the     │
   │  → appsink       │  │  subscriber callback   │
-  │  zero-copy       │  │  no GStreamer at all   │
+  │  zero-copy ingest│  │  no GStreamer at all   │
   └──────────────────┘  └────────────────────────┘
 ```
 
@@ -88,7 +152,7 @@ The fallback is **live-validated** against the GStreamer plugin registry — an 
 ```bash
 # Clone into a colcon workspace
 cd ~/ros2_ws/src
-git clone --recursive https://github.com/sohams25/GstAdaptNode.git gst_adapt_node
+git clone https://github.com/sohams25/prism-ros.git prism_image_proc
 
 # Install deps
 sudo apt install ros-humble-image-proc gstreamer1.0-vaapi \
@@ -97,11 +161,11 @@ pip install flask psutil
 
 # Build
 cd ~/ros2_ws
-colcon build --packages-up-to gst_adapt_node
+colcon build --packages-up-to prism_image_proc
 source install/setup.bash
 
 # Run the A/B stress test (any 4K mp4)
-ros2 launch gst_adapt_node A_B_comparison.launch.py \
+ros2 launch prism_image_proc A_B_comparison.launch.py \
   video_path:=/path/to/4k_video.mp4
 ```
 
@@ -112,7 +176,7 @@ The launch file runs two `component_container` processes (one for each pipeline)
 In a second terminal:
 
 ```bash
-ros2 run gst_adapt_node visualize_demo.py
+ros2 run prism_image_proc visualize_demo.py
 ```
 
 Open <http://localhost:8080>. The dashboard shows:
@@ -124,7 +188,7 @@ Open <http://localhost:8080>. The dashboard shows:
 
 ## Parameters
 
-### `gst_adapt_node::ResizeNode`
+### `prism::ResizeNode`
 
 Matches the `image_proc::ResizeNode` interface.
 
@@ -136,8 +200,14 @@ Matches the `image_proc::ResizeNode` interface.
 | `input_topic` | string | `/camera/image_raw` | Source topic |
 | `output_topic` | string | `/camera/image_processed` | Destination topic |
 | `source_width`, `source_height` | int | `3840`, `2160` | Source caps (GPU mode only) |
+| `input_transport` | string | `raw` | `image_transport` name (`raw`, `compressed`, `theora`, …). `raw` keeps the UniquePtr zero-copy hot path |
+| `publish_camera_info` | bool | `true` | Publish a scaled `CameraInfo` alongside the processed image |
+| `action` | string | `resize` | Action chain, comma- or pipe-separated (e.g. `crop,resize,colorconvert`) |
+| `target_encoding` | string | `bgr8` | Only read when chain contains `colorconvert`. One of `bgr8`, `rgb8`, `mono8` |
+| `crop_x`, `crop_y`, `crop_width`, `crop_height` | int | `0` | Only read when chain contains `crop`. Pixel offsets into the source |
+| `flip_method` | string | `none` | Only read when chain contains `flip`. `none`, `horizontal`, or `vertical` |
 
-### `gst_adapt_node::MediaStreamerNode`
+### `prism::MediaStreamerNode`
 
 Video-file publisher used by the A/B launch.
 
@@ -152,10 +222,10 @@ Video-file publisher used by the A/B launch.
 ## Components
 
 ```
-gst_adapt_node
-  gst_adapt_node::ResizeNode         # drop-in image_proc::ResizeNode replacement
-  gst_adapt_node::MediaStreamerNode  # video-file publisher (bgr8)
-  gst_adapt_node::Synthetic4kPubNode # synthetic 4K test source
+prism_image_proc
+  prism::ResizeNode         # drop-in image_proc::ResizeNode (resize) + chainable crop/flip/colorconvert
+  prism::MediaStreamerNode  # video-file publisher (bgr8)
+  prism::Synthetic4kPubNode # synthetic 4K test source
 ```
 
 Load into any `rclcpp_components::ComponentContainer` with `use_intra_process_comms: true`.
@@ -163,17 +233,17 @@ Load into any `rclcpp_components::ComponentContainer` with `use_intra_process_co
 ## Project Structure
 
 ```
-gst_adapt_node/
+prism_image_proc/
 ├── CMakeLists.txt
 ├── package.xml
 ├── LICENSE
 ├── config/
 │   ├── demo_params.yaml
 │   └── fastdds_no_shm.xml          # UDPv4-only Fast-DDS profile
-├── include/gst_adapt_node/          # 5 public headers
+├── include/prism_image_proc/          # 5 public headers
 ├── launch/
 │   ├── A_B_comparison.launch.py    # two-container A/B stress test
-│   └── gst_adapt_demo.launch.py
+│   └── prism_image_proc_demo.launch.py
 ├── scripts/
 │   ├── dashboard.html              # served by visualize_demo.py
 │   ├── visualize_demo.py           # Flask web dashboard
