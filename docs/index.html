@@ -1,966 +1,1187 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Prism — ROS 2 perception acceleration that picks the right path through your hardware</title>
-  <meta name="description" content="A drop-in replacement for image_proc::ResizeNode's resize pipeline — same parameters, scaled CameraInfo, and chainable crop/flip/colorconvert — that probes /dev/ at startup, validates against the GStreamer registry, and selects the fastest viable backend. Targets the ROS 2 fleet Isaac ROS does not cover." />
-  <meta name="author" content="Soham Shinde" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prism — ROS 2 perception acceleration</title>
+<meta name="description" content="Prism is a hardware-agnostic ROS 2 image-processing accelerator. Drop-in replacement for image_proc::ResizeNode that auto-detects VA-API, NVMM, or CPU backends." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<style>
+  /* ───────────────────────────────────────────────────────────────
+     Palette — Tokyo Night base, tuned for WCAG AA
+     ─────────────────────────────────────────────────────────────── */
+  :root[data-theme="dark"] {
+    --bg:            #1a1b26;
+    --bg-elevated:   #1f2030;
+    --bg-card:       #20212f;
+    --bg-code:       #16171f;
+    --border:        #2b2d3f;
+    --border-strong: #3b3d52;
+    --fg:            #c0caf5;
+    --fg-muted:      #a9b1d6;
+    --fg-dim:        #7a83a8;
+    --fg-subtle:     #565f89;
+    --accent:        #bb9af7;          /* violet */
+    --accent-2:      #7dcfff;          /* cyan  */
+    --accent-fg:     #1a1b26;
+    --success:       #9ece6a;
+    --code-comment:  #565f89;
+    --code-key:      #bb9af7;
+    --code-str:      #9ece6a;
+    --code-func:     #7aa2f7;
+    --code-num:      #ff9e64;
+    --code-plain:    #c0caf5;
+    --code-tag:      #f7768e;
+    --selection-bg:  #3d59a1;
+    --ray-violet:    #bb9af7;
+    --ray-indigo:    #9db6ff;
+    --ray-cyan:      #7dcfff;
+    --beam:          #c0caf5;
+    --prism-face-a:  rgba(187,154,247,0.22);
+    --prism-face-b:  rgba(157,182,255,0.12);
+    --prism-face-c:  rgba(125,207,255,0.22);
+  }
+  :root[data-theme="light"] {
+    --bg:            #fbfbfd;
+    --bg-elevated:   #ffffff;
+    --bg-card:       #ffffff;
+    --bg-code:       #f5f5fa;
+    --border:        #e6e7ef;
+    --border-strong: #c8cadc;
+    --fg:            #1a1b26;
+    --fg-muted:      #3b425f;
+    --fg-dim:        #5e6585;
+    --fg-subtle:     #8b91ac;
+    --accent:        #5a3bb5;
+    --accent-2:      #0b7d9e;
+    --accent-fg:     #ffffff;
+    --success:       #2d7a3a;
+    --code-comment:  #8b91ac;
+    --code-key:      #5a3bb5;
+    --code-str:      #2d7a3a;
+    --code-func:     #1d5fc5;
+    --code-num:      #a04a14;
+    --code-plain:    #1a1b26;
+    --code-tag:      #a0344a;
+    --selection-bg:  #d6defc;
+    --ray-violet:    #6b42b8;
+    --ray-indigo:    #3456b5;
+    --ray-cyan:      #0b7d9e;
+    --beam:          #474d6b;
+    --prism-face-a:  rgba(107,66,184,0.14);
+    --prism-face-b:  rgba(52,86,181,0.08);
+    --prism-face-c:  rgba(11,125,158,0.14);
+  }
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap"
-    rel="stylesheet"
-  />
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+  ::selection { background: var(--selection-bg); color: var(--fg); }
 
-  <style>
-    :root {
-      --paper:       #F6F3EB;
-      --paper-2:     #EFECE2;
-      --paper-deep:  #E7E2D3;
-      --ink:         #14120F;
-      --ink-2:       #3F3C37;
-      --ink-3:       #73706A;
-      --ink-4:       #A8A499;
-      --rule:        #DDD7CB;
-      --rule-strong: #9E9789;
-      --accent:      #8F2D11;   /* Venetian brick */
-      --accent-soft: #B4593A;
-      --diff-add-bg: #E4EEDE;
-      --diff-add-fg: #1E6B3A;
-      --diff-add-rail:#4A9461;
-      --diff-del-bg: #F3E1DB;
-      --diff-del-fg: #8F2D11;
-      --diff-del-rail:#B4593A;
-      --serif:  'IBM Plex Serif', 'Iowan Old Style', Georgia, serif;
-      --sans:   'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
-      --mono:   'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
-      --measure: 62ch;
-    }
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
 
-    * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
-    body {
-      margin: 0;
-      background: var(--paper);
-      color: var(--ink);
-      font-family: var(--serif);
-      font-size: 16px;
-      line-height: 1.62;
-      font-feature-settings: "onum" 1, "liga" 1, "kern" 1;
-      -webkit-font-smoothing: antialiased;
-    }
+  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+  .serif { font-family: 'Instrument Serif', 'Iowan Old Style', Cambria, 'Times New Roman', Georgia, serif; font-weight: 400; letter-spacing: 0; }
 
-    ::selection { background: var(--accent); color: var(--paper); }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 2px; }
 
-    a {
-      color: var(--accent);
-      text-decoration: underline;
-      text-decoration-thickness: 1px;
-      text-underline-offset: 3px;
-    }
-    a:hover { color: var(--accent-soft); }
+  h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; color: var(--fg); line-height: 1.2; margin: 0; }
+  p { margin: 0 0 1rem 0; color: var(--fg-muted); max-width: 68ch; }
 
-    code {
-      font-family: var(--mono);
-      font-size: 0.92em;
-      background: var(--paper-2);
-      padding: 1px 5px;
-      border-radius: 2px;
-      color: var(--ink);
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Skip link
+     ─────────────────────────────────────────────────────────────── */
+  .skip {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--accent); color: var(--accent-fg);
+    padding: 10px 14px; border-radius: 6px; font-weight: 600;
+    z-index: 1000;
+  }
+  .skip:focus { left: 12px; top: 12px; }
 
-    p { margin: 0 0 1.1rem; }
-    p + p { margin-top: 1.1rem; }
+  /* ───────────────────────────────────────────────────────────────
+     Layout
+     ─────────────────────────────────────────────────────────────── */
+  .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  main > section { padding: 72px 0; border-bottom: 1px solid var(--border); }
+  main > section:last-of-type { border-bottom: 0; }
+  .section-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 14px; display: block;
+  }
+  h2.section-title {
+    font-family: 'Instrument Serif', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: clamp(34px, 3.6vw, 44px);
+    font-weight: 400;
+    letter-spacing: -0.005em;
+    line-height: 1.1;
+    margin-bottom: 32px;
+  }
+  h3.sub-title { font-size: 17px; margin: 28px 0 12px; color: var(--fg); font-weight: 600; }
 
-    hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
-    hr.rule-strong { border: 0; border-top: 1px solid var(--rule-strong); margin: 0; }
+  /* ───────────────────────────────────────────────────────────────
+     Top nav
+     ─────────────────────────────────────────────────────────────── */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    height: 52px;
+    border-bottom: 1px solid transparent;
+    transition: background 140ms ease, border-color 140ms ease, backdrop-filter 140ms ease;
+  }
+  .nav.scrolled {
+    background: color-mix(in oklab, var(--bg) 82%, transparent);
+    backdrop-filter: saturate(140%) blur(10px);
+    -webkit-backdrop-filter: saturate(140%) blur(10px);
+    border-bottom-color: var(--border);
+  }
+  .nav-inner { display: flex; align-items: center; height: 100%; gap: 24px; }
+  .wordmark {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--fg); font-weight: 600; letter-spacing: -0.01em;
+    font-size: 15px;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .wordmark-glyph {
+    width: 22px; height: 22px; display: inline-block; flex-shrink: 0;
+  }
+  .wordmark-glyph svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
+  .nav-links a {
+    color: var(--fg-dim); font-size: 13.5px; font-weight: 500;
+    white-space: nowrap;
+  }
+  .nav-links a:hover { color: var(--fg); text-decoration: none; }
+  .nav-links .github-link { color: var(--fg-muted); }
+  .theme-toggle {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg-dim); width: 32px; height: 32px; border-radius: 6px;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: border-color 120ms, color 120ms;
+  }
+  .theme-toggle:hover { color: var(--fg); border-color: var(--border-strong); }
+  .theme-toggle svg { width: 14px; height: 14px; }
 
-    /* ──────────── Layout ──────────── */
-    .shell {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 0 40px;
-    }
-    @media (max-width: 760px) { .shell { padding: 0 22px; } }
+  .menu-toggle { display: none; background: transparent; border: 1px solid var(--border); color: var(--fg); width: 36px; height: 32px; border-radius: 6px; cursor: pointer; }
 
-    /* Running header */
-    .runhead {
-      border-bottom: 1px solid var(--rule);
-      font-family: var(--sans);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--ink-3);
-      padding: 10px 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-    }
-    .runhead a { color: inherit; text-decoration: none; }
-    .runhead a:hover { color: var(--accent); }
-    .runhead .mark {
-      display: inline-flex; align-items: center; gap: 10px;
-      color: var(--ink);
-      font-family: var(--mono);
-      font-weight: 500;
-      font-size: 12px;
-      letter-spacing: 0;
-      text-transform: none;
-    }
-    .runhead .links { display: flex; gap: 22px; }
-    @media (max-width: 640px) {
-      .runhead .links { display: none; }
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Hero
+     ─────────────────────────────────────────────────────────────── */
+  .hero { position: relative; padding: 96px 0 88px; border-bottom: 1px solid var(--border); overflow: hidden; }
+  .hero-art {
+    position: absolute; top: 0; right: 0; height: 100%;
+    width: min(58%, 720px);
+    pointer-events: none; z-index: 0;
+    mask-image: linear-gradient(to left, #000 70%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to left, #000 70%, transparent 100%);
+  }
+  .hero-art svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  .hero-inner { position: relative; z-index: 1; }
+  h1.hero-title {
+    font-family: 'Instrument Serif', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: clamp(64px, 10vw, 128px);
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    font-weight: 400;
+    margin-bottom: 20px;
+  }
+  h1.hero-title em {
+    font-style: italic;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero-tagline {
+    font-size: clamp(18px, 1.7vw, 22px);
+    color: var(--fg-muted);
+    max-width: 38ch;
+    margin: 0 0 36px;
+    line-height: 1.45;
+  }
+  .hero-tagline em {
+    font-family: 'Instrument Serif', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-style: italic;
+    font-size: 1.15em;
+    color: var(--fg);
+    letter-spacing: -0.005em;
+  }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 18px; border-radius: 8px;
+    font-weight: 500; font-size: 14px; letter-spacing: -0.005em;
+    border: 1px solid transparent; cursor: pointer;
+    white-space: nowrap;
+    transition: transform 80ms ease, border-color 120ms, background 120ms, color 120ms;
+  }
+  .btn:hover { text-decoration: none; }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: var(--accent-fg);
+    font-weight: 600;
+  }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-secondary {
+    background: transparent; color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .btn-secondary:hover { border-color: var(--fg-dim); background: var(--bg-elevated); }
 
-    /* Masthead */
-    .masthead {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
-      gap: 56px;
-      padding: 72px 0 40px;
-      align-items: start;
-    }
-    .masthead > div { min-width: 0; }
-    @media (max-width: 1080px) {
-      .masthead { grid-template-columns: 1fr; gap: 40px; padding-top: 48px; }
-    }
+  .status-row {
+    margin-top: 40px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    align-items: center;
+  }
+  .status-row .dot { color: var(--fg-subtle); }
+  .status-row .ci { color: var(--success); }
+  .status-row .ci::before {
+    content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--success); margin-right: 6px; vertical-align: 1px;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 18%, transparent);
+  }
 
-    .masthead h1 {
-      font-family: var(--serif);
-      font-size: clamp(44px, 6vw, 76px);
-      font-weight: 500;
-      line-height: 0.98;
-      letter-spacing: -0.025em;
-      margin: 0 0 22px;
-      font-feature-settings: "onum" 1, "liga" 1;
-      overflow-wrap: break-word;
-      word-break: break-word;
-      hyphens: auto;
-    }
-    .masthead h1 em {
-      font-style: italic;
-      color: var(--accent);
-      font-weight: 500;
-    }
-    .deck {
-      font-family: var(--serif);
-      font-style: italic;
-      font-size: clamp(18px, 2vw, 22px);
-      color: var(--ink-2);
-      line-height: 1.4;
-      margin: 0;
-      max-width: 30ch;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     "What it is" — two columns
+     ─────────────────────────────────────────────────────────────── */
+  .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: start; }
+  .two-col > * { min-width: 0; }
+  .lede { font-size: 17px; color: var(--fg-muted); line-height: 1.6; margin-bottom: 24px; }
+  .lede strong { color: var(--fg); font-weight: 600; }
+  .bullets { list-style: none; padding: 0; margin: 0; }
+  .bullets li {
+    position: relative; padding-left: 22px; margin-bottom: 10px;
+    color: var(--fg-muted); font-size: 14.5px;
+  }
+  .bullets li::before {
+    content: ''; position: absolute; left: 0; top: 10px;
+    width: 6px; height: 6px; border-radius: 1px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    transform: rotate(45deg);
+  }
+  .bullets code { color: var(--fg); font-size: 13px; }
 
-    /* Metadata sidebar */
-    .meta {
-      border-top: 1px solid var(--ink);
-      padding-top: 14px;
-      font-family: var(--sans);
-      font-size: 12px;
-    }
-    .meta h6 {
-      font-family: var(--sans);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--ink-3);
-      margin: 0 0 10px;
-    }
-    .meta dl {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 6px 16px;
-      margin: 0;
-      font-variant-numeric: tabular-nums;
-    }
-    .meta dt {
-      color: var(--ink-3);
-      font-weight: 500;
-      letter-spacing: 0.02em;
-    }
-    .meta dd {
-      margin: 0;
-      color: var(--ink);
-      font-family: var(--mono);
-      font-size: 11.5px;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Code blocks
+     ─────────────────────────────────────────────────────────────── */
+  .code {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in oklab, var(--bg-code) 70%, var(--bg-elevated));
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px; color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+  .code-header .copy {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg-dim); font-family: inherit; font-size: 11px;
+    padding: 3px 8px; border-radius: 4px; cursor: pointer;
+    transition: color 120ms, border-color 120ms;
+  }
+  .code-header .copy:hover { color: var(--fg); border-color: var(--border-strong); }
+  .code-header .copy.copied { color: var(--success); border-color: var(--success); }
+  pre.code-body {
+    margin: 0; padding: 16px 18px;
+    overflow-x: auto;
+    color: var(--code-plain);
+    tab-size: 4;
+  }
+  pre.code-body code { font-family: inherit; font-size: inherit; white-space: pre; }
+  .tok-c { color: var(--code-comment); font-style: italic; }
+  .tok-k { color: var(--code-key); }
+  .tok-s { color: var(--code-str); }
+  .tok-f { color: var(--code-func); }
+  .tok-n { color: var(--code-num); }
+  .tok-t { color: var(--code-tag); }
+  .tok-p { color: var(--fg-muted); }
+  .line-highlight { background: color-mix(in oklab, var(--accent) 10%, transparent); display: block; margin: 0 -18px; padding: 0 18px; border-left: 2px solid var(--accent); padding-left: 16px; }
 
-    .meta .spec-strip {
-      margin-top: 22px;
-      padding-top: 16px;
-      border-top: 1px solid var(--rule);
-    }
-    .meta .spec-strip dl dd { color: var(--accent); font-weight: 500; }
+  /* ───────────────────────────────────────────────────────────────
+     Quick start — steps
+     ─────────────────────────────────────────────────────────────── */
+  .steps { display: grid; gap: 28px; }
+  .step { display: grid; grid-template-columns: 40px 1fr; gap: 18px; align-items: start; }
+  .step-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    color: var(--fg); background: var(--bg-elevated);
+    margin-top: 2px;
+  }
+  .step h3 { font-size: 16px; margin: 4px 0 10px; }
+  .step p { font-size: 14.5px; margin-bottom: 10px; }
+  .callout {
+    margin-top: 32px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 14px;
+    color: var(--fg-muted);
+    background: var(--bg-elevated);
+  }
+  .callout strong { color: var(--fg); font-weight: 600; }
 
-    /* Abstract */
-    .abstract {
-      padding: 32px 0 40px;
-      border-top: 1px solid var(--ink);
-      border-bottom: 1px solid var(--rule);
-      max-width: var(--measure);
-    }
-    .abstract::before {
-      content: "Abstract.";
-      font-variant-caps: all-small-caps;
-      letter-spacing: 0.06em;
-      font-weight: 600;
-      color: var(--ink);
-      margin-right: 0.6em;
-    }
-    .abstract p:first-of-type { display: inline; }
-    .abstract .dropcap {
-      float: left;
-      font-family: var(--serif);
-      font-size: 74px;
-      line-height: 0.85;
-      font-weight: 500;
-      color: var(--accent);
-      margin: 6px 10px 0 0;
-      padding: 0;
-      letter-spacing: -0.03em;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Architecture
+     ─────────────────────────────────────────────────────────────── */
+  .arch-diagram-wrap {
+    margin: 28px 0 32px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 20px;
+    background: var(--bg-elevated);
+    overflow-x: auto;
+  }
+  .arch-diagram {
+    display: block; margin: 0 auto; width: 100%; max-width: 640px; height: auto;
+    color: var(--fg-muted);
+  }
 
-    /* Contents */
-    .contents {
-      display: grid;
-      grid-template-columns: 80px 1fr;
-      gap: 0 40px;
-      padding: 36px 0;
-      border-bottom: 1px solid var(--rule);
-    }
-    .contents h6 {
-      font-family: var(--sans);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--ink-3);
-      margin: 6px 0 0;
-    }
-    .contents ol {
-      list-style: none;
-      counter-reset: toc;
-      padding: 0; margin: 0;
-      columns: 2;
-      column-gap: 48px;
-    }
-    .contents li {
-      counter-increment: toc;
-      padding: 4px 0;
-      break-inside: avoid;
-      display: flex; align-items: baseline; gap: 12px;
-    }
-    .contents li::before {
-      content: "§" counter(toc);
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--ink-3);
-      min-width: 26px;
-    }
-    .contents .leader {
-      flex: 1;
-      border-bottom: 1px dotted var(--ink-4);
-      margin: 0 8px;
-      transform: translateY(-4px);
-    }
-    .contents .page {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--ink-3);
-    }
-    .contents a {
-      color: var(--ink);
-      text-decoration: none;
-      font-family: var(--serif);
-      font-size: 17px;
-    }
-    .contents a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-    @media (max-width: 720px) {
-      .contents { grid-template-columns: 1fr; }
-      .contents ol { columns: 1; }
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Tables
+     ─────────────────────────────────────────────────────────────── */
+  .tbl-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table.tbl {
+    width: 100%; border-collapse: collapse; font-size: 13.5px;
+  }
+  table.tbl th, table.tbl td {
+    text-align: left;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.tbl th {
+    background: var(--bg-elevated);
+    color: var(--fg);
+    font-weight: 600; font-size: 12px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  table.tbl tr:last-child td { border-bottom: 0; }
+  table.tbl tbody tr:nth-child(even) td { background: color-mix(in oklab, var(--bg-elevated) 35%, transparent); }
+  table.tbl code { font-size: 12.5px; color: var(--fg); }
+  table.tbl td:first-child { font-family: 'JetBrains Mono', monospace; color: var(--fg); white-space: nowrap; }
 
-    /* Sections */
-    section.body {
-      display: grid;
-      grid-template-columns: 80px minmax(0, 1fr);
-      gap: 0 40px;
-      padding: 64px 0 48px;
-      border-bottom: 1px solid var(--rule);
-    }
-    section.body > .section-no {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--ink-3);
-      padding-top: 10px;
-      letter-spacing: 0.02em;
-    }
-    section.body > .section-body {
-      max-width: var(--measure);
-    }
-    section.body > .section-body.wide {
-      max-width: none;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Components — cards
+     ─────────────────────────────────────────────────────────────── */
+  .card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+  }
+  .card:hover { border-color: var(--border-strong); }
+  :root[data-theme="light"] .card:hover { box-shadow: 0 2px 14px -6px rgba(30, 30, 60, 0.12); }
+  .card .class-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15.5px; font-weight: 500;
+    color: var(--fg); display: block; margin-bottom: 8px;
+    word-break: break-word;
+  }
+  .card .class-name .ns { color: var(--fg-dim); }
+  .card p { font-size: 13.5px; margin-bottom: 12px; }
+  .card .card-link {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .card .card-link:hover { color: var(--accent-2); }
+  .card-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--fg-subtle); margin-bottom: 8px;
+  }
 
-    section.body h2 {
-      font-family: var(--serif);
-      font-size: clamp(28px, 3.6vw, 40px);
-      font-weight: 500;
-      line-height: 1.08;
-      letter-spacing: -0.018em;
-      margin: 0 0 28px;
-    }
-    section.body h3 {
-      font-family: var(--sans);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--ink);
-      margin: 32px 0 10px;
-    }
-    section.body h3 .numeral {
-      color: var(--ink-3);
-      margin-right: 12px;
-      font-variant-numeric: tabular-nums;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Positioning
+     ─────────────────────────────────────────────────────────────── */
+  .prose p { font-size: 15px; margin-bottom: 14px; }
+  .prose strong { color: var(--fg); font-weight: 600; }
+  .finding {
+    margin: 28px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    padding: 20px 22px;
+  }
+  .finding h3 {
+    font-size: 13px; font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px;
+  }
+  .finding p { font-size: 14.5px; margin-bottom: 0; }
+  .not-list { list-style: none; padding: 0; margin: 16px 0 0 0; }
+  .not-list li {
+    padding-left: 22px; position: relative;
+    color: var(--fg-muted); font-size: 14.5px; margin-bottom: 8px;
+  }
+  .not-list li::before {
+    content: '—'; position: absolute; left: 0; color: var(--fg-subtle);
+  }
 
-    @media (max-width: 720px) {
-      section.body { grid-template-columns: 1fr; gap: 8px; }
-      section.body > .section-no { padding-top: 0; }
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Benchmarks placeholder
+     ─────────────────────────────────────────────────────────────── */
+  .bench {
+    max-width: 640px; margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 36px 32px;
+    text-align: center;
+    background: var(--bg-elevated);
+  }
+  .bench .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--fg-subtle); margin-bottom: 12px;
+  }
+  .bench h3 { font-size: 18px; margin-bottom: 14px; }
+  .bench p { margin: 0 auto 14px; font-size: 14.5px; max-width: 56ch; }
 
-    /* Marginalia */
-    .marginalia {
-      font-family: var(--sans);
-      font-size: 12px;
-      color: var(--ink-3);
-      line-height: 1.45;
-      padding-top: 6px;
-    }
+  /* ───────────────────────────────────────────────────────────────
+     Footer
+     ─────────────────────────────────────────────────────────────── */
+  footer {
+    padding: 32px 0 40px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-dim); font-size: 13px;
+  }
+  footer .row { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: center; }
+  footer .row + .row { margin-top: 10px; color: var(--fg-subtle); }
+  footer a { color: var(--fg-muted); }
+  footer a:hover { color: var(--fg); }
+  footer .sep { color: var(--fg-subtle); }
 
-    /* Diff block */
-    .diff-wrap {
-      margin: 26px 0;
-      border: 1px solid var(--rule-strong);
-      background: var(--paper);
+  /* ───────────────────────────────────────────────────────────────
+     Responsive
+     ─────────────────────────────────────────────────────────────── */
+  @media (max-width: 860px) {
+    .two-col { grid-template-columns: 1fr; gap: 32px; }
+    .card-grid { grid-template-columns: 1fr; }
+    h1.hero-title { font-size: 48px; }
+    .hero { padding: 72px 0 64px; }
+    main > section { padding: 56px 0; }
+    .hero-art { width: 60%; opacity: 0.75; }
+  }
+  @media (max-width: 640px) {
+    .nav-links { display: none; gap: 14px; }
+    .nav-links.open {
+      display: flex; flex-direction: column; align-items: stretch;
+      position: absolute; top: 52px; left: 0; right: 0;
+      background: var(--bg-elevated); padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
     }
-    .diff-head {
-      font-family: var(--sans);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--ink-3);
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--rule-strong);
-      display: flex; justify-content: space-between; align-items: center;
-      background: var(--paper-2);
-    }
-    .diff-head .path {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--ink);
-      text-transform: none;
-      letter-spacing: 0;
-    }
-    .diff {
-      font-family: var(--mono);
-      font-size: 13.5px;
-      line-height: 1.65;
-      margin: 0;
-      padding: 14px 0;
-      overflow-x: auto;
-    }
-    .diff .ln {
-      display: grid;
-      grid-template-columns: 40px 14px 1fr;
-      align-items: baseline;
-      padding: 0 16px 0 0;
-    }
-    .diff .num {
-      text-align: right;
-      padding-right: 14px;
-      color: var(--ink-4);
-      font-size: 11.5px;
-      user-select: none;
-    }
-    .diff .sig {
-      color: var(--ink-4);
-      font-weight: 500;
-    }
-    .diff .txt { white-space: pre; }
-    .diff .ln.del {
-      background: var(--diff-del-bg);
-      box-shadow: inset 2px 0 0 0 var(--diff-del-rail);
-    }
-    .diff .ln.del .sig, .diff .ln.del .txt { color: var(--diff-del-fg); }
-    .diff .ln.add {
-      background: var(--diff-add-bg);
-      box-shadow: inset 2px 0 0 0 var(--diff-add-rail);
-    }
-    .diff .ln.add .sig, .diff .ln.add .txt { color: var(--diff-add-fg); }
-    .diff-caption {
-      font-family: var(--sans);
-      font-size: 12px;
-      color: var(--ink-3);
-      border-top: 1px solid var(--rule);
-      padding: 10px 16px;
-      background: var(--paper);
-    }
+    .nav-links.open a { padding: 8px 0; }
+    .menu-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }
+    .theme-toggle { margin-left: 0; }
 
-    /* Code block (install) */
-    .code-block {
-      margin: 24px 0 10px;
-      border: 1px solid var(--rule-strong);
-      background: var(--paper);
+    /* Collapse tables into definition-list layout on narrow screens */
+    .tbl-wrap { border: 0; }
+    table.tbl, table.tbl thead, table.tbl tbody, table.tbl tr, table.tbl th, table.tbl td {
+      display: block; width: 100%;
     }
-    .code-block .code-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--rule-strong);
-      background: var(--paper-2);
-      font-family: var(--sans);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--ink-3);
+    table.tbl thead { display: none; }
+    table.tbl tr {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 10px; background: var(--bg-elevated);
     }
-    .code-block pre {
-      margin: 0;
-      padding: 18px 20px;
-      font-family: var(--mono);
-      font-size: 13px;
-      line-height: 1.7;
-      color: var(--ink);
-      overflow-x: auto;
-      tab-size: 2;
+    table.tbl td {
+      border: 0; padding: 6px 0; font-size: 13.5px;
+      display: grid; grid-template-columns: 90px 1fr; gap: 12px;
     }
-    .code-block pre .hash { color: var(--ink-3); }
-    .code-block pre .cmd  { color: var(--accent); }
-
-    /* Data table */
-    .tbl-wrap { margin: 24px 0; overflow-x: auto; }
-    table.data {
-      width: 100%;
-      border-collapse: collapse;
-      font-family: var(--sans);
-      font-size: 13px;
-      border-top: 1px solid var(--ink);
-      border-bottom: 1px solid var(--ink);
+    table.tbl td:first-child { font-weight: 600; color: var(--fg); }
+    table.tbl td::before {
+      content: attr(data-label);
+      color: var(--fg-subtle); font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
     }
-    table.data caption {
-      text-align: left;
-      font-family: var(--sans);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--ink-3);
-      padding: 0 0 10px;
-      caption-side: top;
-    }
-    table.data caption b {
-      color: var(--ink);
-      font-weight: 600;
-      margin-right: 8px;
-    }
-    table.data thead th {
-      font-family: var(--sans);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--ink-3);
-      text-align: left;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--rule-strong);
-      white-space: nowrap;
-    }
-    table.data thead th.num { text-align: right; }
-    table.data tbody td {
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--rule);
-      vertical-align: baseline;
-    }
-    table.data tbody tr:last-child td { border-bottom: 0; }
-    table.data td.num {
-      font-family: var(--mono);
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      font-size: 13px;
-    }
-    table.data td.label {
-      font-family: var(--mono);
-      font-size: 13px;
-    }
-    table.data tbody tr.winner td.num { color: var(--accent); font-weight: 500; }
-    table.data tbody tr.winner td.label::before {
-      content: "\25B6";
-      color: var(--accent);
-      margin-right: 10px;
-      font-size: 10px;
-      transform: translateY(-1px);
-      display: inline-block;
-    }
-    table.data tbody tr td.delta {
-      font-family: var(--mono);
-      color: var(--accent);
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-    }
-
-    /* Figure */
-    .figure {
-      margin: 28px 0 18px;
-    }
-    .figure .frame {
-      border: 1px solid var(--ink);
-      background: var(--paper);
-      overflow: hidden;
-    }
-    .figure .frame img,
-    .figure .frame svg {
-      display: block;
-      width: 100%;
-      height: auto;
-    }
-    .figure figcaption {
-      font-family: var(--sans);
-      font-size: 12.5px;
-      color: var(--ink-3);
-      padding: 12px 0 0;
-      line-height: 1.5;
-    }
-    .figure figcaption b {
-      color: var(--ink);
-      font-weight: 600;
-      margin-right: 8px;
-    }
-
-    /* Ascii diagram */
-    .ascii {
-      margin: 24px 0;
-      padding: 20px 22px;
-      background: var(--paper-2);
-      border-left: 2px solid var(--ink);
-      font-family: var(--mono);
-      font-size: 12px;
-      line-height: 1.55;
-      color: var(--ink);
-      white-space: pre;
-      overflow-x: auto;
-    }
-
-    /* Platform list */
-    .platform-list {
-      display: grid;
-      grid-template-columns: 120px 1fr auto;
-      border-top: 1px solid var(--ink);
-      border-bottom: 1px solid var(--ink);
-      margin: 22px 0 6px;
-    }
-    .platform-list > div {
-      padding: 14px 18px;
-      border-bottom: 1px solid var(--rule);
-    }
-    .platform-list > div:nth-last-child(-n+3) {
-      border-bottom: 0;
-    }
-    .platform-list .plat-name {
-      font-family: var(--sans);
-      font-weight: 600;
-      font-size: 13px;
-      letter-spacing: 0.02em;
-      color: var(--ink);
-    }
-    .platform-list .plat-desc {
-      font-family: var(--serif);
-      font-size: 14px;
-      color: var(--ink-2);
-      line-height: 1.45;
-    }
-    .platform-list .plat-code {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--accent);
-      white-space: nowrap;
-      align-self: center;
-    }
-    @media (max-width: 720px) {
-      .platform-list { grid-template-columns: 1fr; }
-      .platform-list > div { padding: 12px 0; }
-      .platform-list .plat-code { color: var(--accent); }
-    }
-
-    /* Callout quote */
-    .callout {
-      border-left: 2px solid var(--accent);
-      padding: 2px 0 2px 20px;
-      margin: 22px 0;
-      font-style: italic;
-      color: var(--ink-2);
-      max-width: 52ch;
-    }
-
-    /* Colophon */
-    footer.colophon {
-      margin-top: 40px;
-      padding: 36px 0 60px;
-      border-top: 1px solid var(--ink);
-      font-family: var(--sans);
-      font-size: 12px;
-      color: var(--ink-3);
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 24px;
-    }
-    footer.colophon h6 {
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--ink);
-      margin: 0 0 8px;
-    }
-    footer.colophon a { color: var(--ink); text-decoration: none; }
-    footer.colophon a:hover { color: var(--accent); text-decoration: underline; }
-    footer.colophon .lic { font-family: var(--mono); font-size: 11.5px; }
-    @media (max-width: 680px) {
-      footer.colophon { grid-template-columns: 1fr; gap: 16px; }
-    }
-
-    :focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 3px;
-    }
-
-    section.body[id] { scroll-margin-top: 20px; }
-
-    @media (prefers-reduced-motion: reduce) {
-      * { transition: none !important; animation: none !important; }
-      html { scroll-behavior: auto; }
-    }
-  </style>
+    table.tbl td:first-child::before { content: ''; }
+    table.tbl tbody tr:nth-child(even) td { background: transparent; }
+  }
+</style>
 </head>
-
 <body>
-  <div class="shell">
 
-    <!-- ─────────── Running header ─────────── -->
-    <div class="runhead">
-      <a href="#top" class="mark">
-        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-          <rect x="1" y="1" width="7" height="7" rx="1" stroke="#73706A" stroke-width="1.2"/>
-          <rect x="10" y="1" width="7" height="7" rx="1" fill="#8F2D11"/>
-          <rect x="1" y="10" width="7" height="7" rx="1" fill="#8F2D11" fill-opacity="0.25"/>
-          <rect x="10" y="10" width="7" height="7" rx="1" stroke="#73706A" stroke-width="1.2"/>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     NAVIGATION
+     ═══════════════════════════════════════════════════════════════ -->
+<header class="nav" id="nav">
+  <div class="container nav-inner">
+    <a href="#top" class="wordmark" aria-label="Prism — top of page">
+      <span class="wordmark-glyph" aria-hidden="true">
+        <!-- Mini prism: triangle apex-up with three thin dispersion rays exiting its right slant -->
+        <svg viewBox="0 0 22 22" fill="none">
+          <defs>
+            <linearGradient id="wm-edge" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" style="stop-color: var(--ray-violet)"/>
+              <stop offset="1" style="stop-color: var(--ray-cyan)"/>
+            </linearGradient>
+          </defs>
+          <!-- triangular prism, apex up -->
+          <path d="M11 3.5 L18.5 17 L3.5 17 Z" fill="url(#wm-edge)" fill-opacity="0.18" stroke="url(#wm-edge)" stroke-width="1.4" stroke-linejoin="round"/>
+          <!-- three refracted rays exiting the right slant -->
+          <line x1="15" y1="10.5" x2="21" y2="8"  style="stroke: var(--ray-violet)" stroke-width="1.3" stroke-linecap="round"/>
+          <line x1="15.5" y1="11.5" x2="21.5" y2="11.5" style="stroke: var(--ray-indigo)" stroke-width="1.3" stroke-linecap="round"/>
+          <line x1="16" y1="12.5" x2="21" y2="15" style="stroke: var(--ray-cyan)" stroke-width="1.3" stroke-linecap="round"/>
         </svg>
-        Prism
+      </span>
+      Prism
+    </a>
+    <nav class="nav-links" id="nav-links" aria-label="Primary">
+      <a href="#quickstart">Quick start</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#components">Components</a>
+      <a href="#parameters">Parameters</a>
+      <a href="#positioning">Positioning</a>
+      <a href="https://github.com/sohams25/prism-ros" class="github-link" rel="noopener">GitHub ↗</a>
+    </nav>
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme" title="Toggle theme">
+      <svg id="icon-moon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z"/>
+      </svg>
+      <svg id="icon-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="8" cy="8" r="3"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4"/>
+      </svg>
+    </button>
+    <button class="menu-toggle" id="menu-toggle" aria-label="Toggle navigation menu" aria-expanded="false">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<span id="top"></span>
+
+<main id="main">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     HERO
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="hero" aria-labelledby="hero-title">
+  <!-- Hero art: a large triangular prism in the top-right. A single white beam
+       enters the left face, refracts, and exits as three colored rays bending
+       at different angles. Masked so it fades into the page on the left. -->
+  <div class="hero-art" aria-hidden="true">
+    <svg viewBox="0 0 680 620" fill="none" preserveAspectRatio="xMaxYMid meet" focusable="false">
+      <defs>
+        <linearGradient id="prism-face" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0"   style="stop-color: var(--ray-violet); stop-opacity: 0.22"/>
+          <stop offset="0.5" style="stop-color: var(--ray-indigo); stop-opacity: 0.12"/>
+          <stop offset="1"   style="stop-color: var(--ray-cyan);   stop-opacity: 0.22"/>
+        </linearGradient>
+        <linearGradient id="prism-edge" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" style="stop-color: var(--ray-violet)"/>
+          <stop offset="1" style="stop-color: var(--ray-cyan)"/>
+        </linearGradient>
+        <linearGradient id="beam-in" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" style="stop-color: var(--beam); stop-opacity: 0"/>
+          <stop offset="1" style="stop-color: var(--beam); stop-opacity: 1"/>
+        </linearGradient>
+        <linearGradient id="ray-violet" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" style="stop-color: var(--ray-violet); stop-opacity: 0.95"/>
+          <stop offset="1" style="stop-color: var(--ray-violet); stop-opacity: 0"/>
+        </linearGradient>
+        <linearGradient id="ray-indigo" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" style="stop-color: var(--ray-indigo); stop-opacity: 0.85"/>
+          <stop offset="1" style="stop-color: var(--ray-indigo); stop-opacity: 0"/>
+        </linearGradient>
+        <linearGradient id="ray-cyan" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" style="stop-color: var(--ray-cyan); stop-opacity: 0.9"/>
+          <stop offset="1" style="stop-color: var(--ray-cyan); stop-opacity: 0"/>
+        </linearGradient>
+      </defs>
+
+      <!-- triangular prism, apex top, light enters left slant, exits right slant -->
+      <path d="M 420 140 L 550 420 L 290 420 Z"
+            fill="url(#prism-face)"
+            stroke="url(#prism-edge)"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            opacity="0.95"/>
+
+      <!-- incoming beam hits the left slant -->
+      <line x1="40" y1="310" x2="355" y2="310" stroke="url(#beam-in)" stroke-width="1.6" stroke-linecap="round"/>
+
+      <!-- three refracted rays exiting the right slant at different angles -->
+      <line x1="485" y1="280" x2="720" y2="200" stroke="url(#ray-violet)" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="490" y1="300" x2="730" y2="300" stroke="url(#ray-indigo)" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="495" y1="320" x2="720" y2="420" stroke="url(#ray-cyan)"   stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="container hero-inner">
+    <h1 class="hero-title" id="hero-title">Prism</h1>
+    <p class="hero-tagline">
+      ROS 2 perception acceleration that picks the <em>right path</em> through your hardware.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/sohams25/prism-ros" rel="noopener">
+        View on GitHub
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l6-6M4 3h5v5"/></svg>
       </a>
-      <nav class="links" aria-label="Sections">
-        <a href="#motivation">&sect;1 Motivation</a>
-        <a href="#positioning">&sect;2 Positioning</a>
-        <a href="#architecture">&sect;3 Architecture</a>
-        <a href="#interface">&sect;4 Interface</a>
-        <a href="#measurements">&sect;5 Measurements</a>
-        <a href="#platforms">&sect;6 Platforms</a>
-        <a href="https://github.com/sohams25/prism-ros">Repository &uarr;</a>
-      </nav>
+      <a class="btn btn-secondary" href="#quickstart">
+        Quick start
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v8M2.5 6.5L6 10l3.5-3.5"/></svg>
+      </a>
+    </div>
+    <div class="status-row" aria-label="Project status">
+      <span>ROS 2 Humble</span>
+      <span class="dot">·</span>
+      <span>Apache-2.0</span>
+      <span class="dot">·</span>
+      <span>v0.1.0</span>
+      <span class="dot">·</span>
+      <span class="ci">CI passing</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     WHAT IT IS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="what-it-is" aria-labelledby="what-title">
+  <div class="container">
+    <span class="section-eyebrow">01 — What it is</span>
+    <h2 class="section-title" id="what-title">A hardware-agnostic perception accelerator</h2>
+    <div class="two-col">
+      <div>
+        <p class="lede">
+          Prism is a <strong>hardware-agnostic ROS 2 image-processing accelerator</strong>. It's a
+          drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline — same
+          parameters, same output, with a scaled <code>CameraInfo</code> on the paired topic —
+          that auto-detects host accelerators at runtime and chooses the fastest available
+          backend: a GStreamer pipeline with zero-copy intra-process ingest on supported GPUs
+          (Intel VA-API, NVIDIA Jetson NVMM), or a direct <code>cv::resize</code> fallback when
+          no usable GPU path is present.
+        </p>
+        <ul class="bullets">
+          <li>Drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline</li>
+          <li>Auto-detects VA-API / NVMM / CPU at runtime</li>
+          <li>Zero-copy intra-process ingest, single-copy egress, no DDS round-trip</li>
+        </ul>
+      </div>
+      <div>
+        <div class="code" role="figure" aria-label="Launch-file swap: drop-in replacement">
+          <div class="code-header">
+            <span>launch.py — one-line swap</span>
+            <button class="copy" data-copy-target="code-swap" type="button">Copy</button>
+          </div>
+<pre class="code-body" id="code-swap"><code><span class="tok-f">ComposableNode</span>(
+    package=<span class="tok-s">'prism_image_proc'</span>,          <span class="tok-c"># was: 'image_proc'</span>
+    plugin=<span class="tok-s">'prism::ResizeNode'</span>,          <span class="tok-c"># was: 'image_proc::ResizeNode'</span>
+    name=<span class="tok-s">'resize'</span>,
+    parameters=[{<span class="tok-s">'width'</span>: <span class="tok-n">640</span>, <span class="tok-s">'height'</span>: <span class="tok-n">480</span>}],
+)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     QUICK START
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="quickstart" aria-labelledby="qs-title">
+  <div class="container">
+    <span class="section-eyebrow">02 — Quick start</span>
+    <h2 class="section-title" id="qs-title">Get running in three steps</h2>
+    <div class="steps">
+
+      <div class="step">
+        <span class="step-num" aria-hidden="true">1</span>
+        <div>
+          <h3>Install prerequisites</h3>
+          <p>On Ubuntu 22.04 with ROS 2 Humble. Pull the image-transport plumbing and the GStreamer dev headers.</p>
+          <div class="code">
+            <div class="code-header">
+              <span>shell</span>
+              <button class="copy" data-copy-target="code-install" type="button">Copy</button>
+            </div>
+<pre class="code-body" id="code-install"><code><span class="tok-c"># Ubuntu 22.04 · ROS 2 Humble</span>
+sudo apt install <span class="tok-p">\</span>
+    ros-humble-image-transport <span class="tok-p">\</span>
+    ros-humble-image-transport-plugins <span class="tok-p">\</span>
+    ros-humble-image-proc <span class="tok-p">\</span>
+    libgstreamer1.0-dev <span class="tok-p">\</span>
+    libgstreamer-plugins-base1.0-dev <span class="tok-p">\</span>
+    gstreamer1.0-plugins-good <span class="tok-p">\</span>
+    gstreamer1.0-vaapi</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num" aria-hidden="true">2</span>
+        <div>
+          <h3>Clone and build</h3>
+          <p>Drop the repo into a colcon workspace and build only the Prism packages.</p>
+          <div class="code">
+            <div class="code-header">
+              <span>shell</span>
+              <button class="copy" data-copy-target="code-build" type="button">Copy</button>
+            </div>
+<pre class="code-body" id="code-build"><code>mkdir -p ~/prism_ws/src <span class="tok-p">&amp;&amp;</span> cd ~/prism_ws/src
+git clone https://github.com/sohams25/prism-ros.git
+cd ~/prism_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select prism_image_proc
+source install/setup.bash</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num" aria-hidden="true">3</span>
+        <div>
+          <h3>Run the demo</h3>
+          <p>Launches a synthetic source feeding a Prism resize node in the same composable container — intra-process, zero-copy where the host supports it.</p>
+          <div class="code">
+            <div class="code-header">
+              <span>shell</span>
+              <button class="copy" data-copy-target="code-run" type="button">Copy</button>
+            </div>
+<pre class="code-body" id="code-run"><code>ros2 launch prism_image_proc prism_image_proc_demo.launch.py</code></pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="callout">
+      <strong>Prefer the A/B stress test?</strong> See the <a href="#benchmarks">benchmarking section</a> below.
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ARCHITECTURE
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="architecture" aria-labelledby="arch-title">
+  <div class="container">
+    <span class="section-eyebrow">03 — Architecture</span>
+    <h2 class="section-title" id="arch-title">Detect, validate, dispatch</h2>
+    <p>
+      At startup, a <code>HardwareDetector</code> probes the host for usable acceleration paths.
+      A <code>PipelineFactory</code> asks <code>gst-inspect</code> to live-validate each candidate —
+      a GStreamer element being present on the system is not the same as it actually working on
+      this kernel, driver stack, and chroma-subsampling combo. The first backend that validates wins.
+    </p>
+
+    <div class="arch-diagram-wrap">
+      <svg class="arch-diagram" viewBox="0 0 620 400" role="img" aria-labelledby="diagram-title diagram-desc">
+        <title id="diagram-title">Prism runtime selection diagram</title>
+        <desc id="diagram-desc">Startup probes HardwareDetector, which feeds PipelineFactory. PipelineFactory validates three candidate backends via gst-inspect: Jetson NVMM, Intel VA-API, and CPU fallback. Whichever validates first wins.</desc>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <style>
+          .diag-box { fill: var(--bg-card); stroke: currentColor; stroke-width: 1; }
+          .diag-box-accent { fill: color-mix(in oklab, var(--accent) 8%, var(--bg-card)); stroke: var(--accent); stroke-width: 1; }
+          .diag-label { font-family: 'JetBrains Mono', monospace; font-size: 12px; fill: var(--fg); }
+          .diag-sub { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; fill: var(--fg-dim); }
+          .diag-pri { font-family: 'JetBrains Mono', monospace; font-size: 10px; fill: var(--accent); }
+          .diag-footer { font-family: 'JetBrains Mono', monospace; font-size: 11px; fill: var(--fg-muted); font-style: italic; }
+          .diag-line { stroke: currentColor; stroke-width: 1; fill: none; opacity: 0.55; }
+        </style>
+
+        <!-- Startup -->
+        <rect class="diag-box" x="40"  y="20" width="140" height="44" rx="6"/>
+        <text class="diag-label" x="110" y="48" text-anchor="middle">Startup</text>
+
+        <!-- HardwareDetector -->
+        <rect class="diag-box" x="220" y="20" width="180" height="44" rx="6"/>
+        <text class="diag-label" x="310" y="48" text-anchor="middle">HardwareDetector</text>
+
+        <line class="diag-line" x1="180" y1="42" x2="220" y2="42" marker-end="url(#arrow)"/>
+
+        <!-- PipelineFactory -->
+        <rect class="diag-box diag-box-accent" x="220" y="100" width="180" height="52" rx="6"/>
+        <text class="diag-label" x="310" y="124" text-anchor="middle">PipelineFactory</text>
+        <text class="diag-sub"   x="310" y="140" text-anchor="middle">validates via gst-inspect</text>
+        <line class="diag-line" x1="310" y1="64" x2="310" y2="100" marker-end="url(#arrow)"/>
+
+        <!-- Branching lines -->
+        <line class="diag-line" x1="310" y1="152" x2="310" y2="180"/>
+        <line class="diag-line" x1="110" y1="180" x2="510" y2="180"/>
+        <line class="diag-line" x1="110" y1="180" x2="110" y2="210" marker-end="url(#arrow)"/>
+        <line class="diag-line" x1="310" y1="180" x2="310" y2="210" marker-end="url(#arrow)"/>
+        <line class="diag-line" x1="510" y1="180" x2="510" y2="210" marker-end="url(#arrow)"/>
+
+        <!-- Jetson NVMM -->
+        <rect class="diag-box" x="30"  y="210" width="160" height="78" rx="6"/>
+        <text class="diag-pri"   x="110" y="230" text-anchor="middle">PRIORITY 1</text>
+        <text class="diag-label" x="110" y="250" text-anchor="middle">Jetson NVMM</text>
+        <text class="diag-sub"   x="110" y="270" text-anchor="middle">nvvideoconvert</text>
+
+        <!-- Intel VA-API -->
+        <rect class="diag-box" x="230" y="210" width="160" height="78" rx="6"/>
+        <text class="diag-pri"   x="310" y="230" text-anchor="middle">PRIORITY 2</text>
+        <text class="diag-label" x="310" y="250" text-anchor="middle">Intel VA-API</text>
+        <text class="diag-sub"   x="310" y="270" text-anchor="middle">vapostproc</text>
+
+        <!-- CPU fallback -->
+        <rect class="diag-box" x="430" y="210" width="160" height="78" rx="6"/>
+        <text class="diag-pri"   x="510" y="230" text-anchor="middle">PRIORITY 3</text>
+        <text class="diag-label" x="510" y="250" text-anchor="middle">CPU fallback</text>
+        <text class="diag-sub"   x="510" y="270" text-anchor="middle">cv::resize</text>
+
+        <!-- Footer label -->
+        <line class="diag-line" x1="110" y1="320" x2="510" y2="320" stroke-dasharray="3 3"/>
+        <text class="diag-footer" x="310" y="346" text-anchor="middle">whichever validates first wins</text>
+      </svg>
     </div>
 
-    <!-- ─────────── Masthead ─────────── -->
-    <header class="masthead" id="top">
-      <div>
-        <h1>Hardware-agnostic<br/>ROS&nbsp;2 <em>perception acceleration</em>.</h1>
-        <p class="deck">
-          A drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline &mdash; same parameters, scaled <code>CameraInfo</code> &mdash; with chainable <code>crop</code>, <code>flip</code>, and <code>colorconvert</code> in a single node. Picks the fastest available backend at runtime. <em>Zero-copy intra-process ingest; single-copy egress; no DDS round-trip.</em>
-        </p>
+    <h3 class="sub-title">Fallback chain</h3>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Priority</th><th>Platform</th><th>Detection</th><th>Processing</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="Priority">1</td>
+            <td data-label="Platform">NVIDIA Jetson</td>
+            <td data-label="Detection"><code>/etc/nv_tegra_release</code> + <code>nvvideoconvert</code> available</td>
+            <td data-label="Processing">GStreamer NVMM zero-copy</td>
+          </tr>
+          <tr>
+            <td data-label="Priority">2</td>
+            <td data-label="Platform">Intel iGPU / dGPU</td>
+            <td data-label="Detection"><code>vapostproc</code> validates via <code>gst-inspect</code></td>
+            <td data-label="Processing">GStreamer VA-API</td>
+          </tr>
+          <tr>
+            <td data-label="Priority">3</td>
+            <td data-label="Platform">Any x86 / ARM</td>
+            <td data-label="Detection">Always available</td>
+            <td data-label="Processing">Direct <code>cv::resize</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     COMPONENTS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="components" aria-labelledby="comp-title">
+  <div class="container">
+    <span class="section-eyebrow">04 — Components</span>
+    <h2 class="section-title" id="comp-title">Registered components</h2>
+    <div class="card-grid">
+
+      <div class="card">
+        <span class="class-name"><span class="ns">prism::</span>ImageProcNode</span>
+        <p>Chainable base node. Configurable action chain (resize, crop, flip, colorconvert), <code>CameraInfo</code> transforms applied per action, runtime reconfigurable.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
       </div>
-      <aside class="meta">
-        <h6>Revision 2026.04</h6>
-        <dl>
-          <dt>Project</dt><dd>prism_image_proc</dd>
-          <dt>Author</dt><dd>Soham Shinde</dd>
-          <dt>License</dt><dd>Apache-2.0</dd>
-          <dt>Language</dt><dd>C++17, Python 3</dd>
-          <dt>Target</dt><dd>ROS 2 Humble</dd>
-          <dt>Depends</dt><dd>GStreamer 1.x</dd>
-        </dl>
 
-        <div class="spec-strip">
-          <h6>Benchmarks</h6>
-          <dl>
-            <dt>Status</dt><dd>Pending re-measurement</dd>
-          </dl>
-        </div>
-      </aside>
-    </header>
+      <div class="card">
+        <span class="class-name"><span class="ns">prism::</span>ResizeNode</span>
+        <p>Thin wrapper pinning <code>action="resize"</code>. Drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline. Preferred entry point for migrations.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
+      </div>
 
-    <!-- ─────────── Abstract ─────────── -->
-    <div class="abstract">
+      <div class="card">
+        <span class="class-name"><span class="ns">prism::</span>CropNode</span>
+        <p>Thin wrapper pinning <code>action="crop"</code>.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
+      </div>
+
+      <div class="card">
+        <span class="class-name"><span class="ns">prism::</span>ColorConvertNode</span>
+        <p>Thin wrapper pinning <code>action="colorconvert"</code>. Targets <code>bgr8</code>, <code>rgb8</code>, or <code>mono8</code> output.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
+      </div>
+
+    </div>
+
+    <h3 class="sub-title">Helpers</h3>
+    <div class="card-grid">
+      <div class="card">
+        <span class="card-label">Helper</span>
+        <span class="class-name"><span class="ns">prism::</span>MediaStreamerNode</span>
+        <p>Video-file publisher for tests.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
+      </div>
+      <div class="card">
+        <span class="card-label">Helper</span>
+        <span class="class-name"><span class="ns">prism::</span>Synthetic4kPubNode</span>
+        <p>Synthetic 4K test source.</p>
+        <a class="card-link" href="https://github.com/sohams25/prism-ros#components" rel="noopener">view on GitHub ↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PARAMETERS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="parameters" aria-labelledby="params-title">
+  <div class="container">
+    <span class="section-eyebrow">05 — Parameters</span>
+    <h2 class="section-title" id="params-title">Parameter reference</h2>
+
+    <h3 class="sub-title">Core resize</h3>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Parameter">use_scale</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Scale by factor when true; use absolute <code>width</code>/<code>height</code> when false.</td></tr>
+          <tr><td data-label="Parameter">scale_width</td><td data-label="Type">double</td><td data-label="Default"><code>1.0</code></td><td data-label="Description">Horizontal scale factor applied when <code>use_scale</code> is true.</td></tr>
+          <tr><td data-label="Parameter">scale_height</td><td data-label="Type">double</td><td data-label="Default"><code>1.0</code></td><td data-label="Description">Vertical scale factor applied when <code>use_scale</code> is true.</td></tr>
+          <tr><td data-label="Parameter">width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Absolute output width in pixels.</td></tr>
+          <tr><td data-label="Parameter">height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Absolute output height in pixels.</td></tr>
+          <tr><td data-label="Parameter">input_topic</td><td data-label="Type">string</td><td data-label="Default"><code>image</code></td><td data-label="Description">Input <code>sensor_msgs/Image</code> topic name.</td></tr>
+          <tr><td data-label="Parameter">output_topic</td><td data-label="Type">string</td><td data-label="Default"><code>resize</code></td><td data-label="Description">Output <code>sensor_msgs/Image</code> topic name.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-title">Action chain</h3>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Parameter">action</td><td data-label="Type">string</td><td data-label="Default"><code>resize</code></td><td data-label="Description">One of <code>resize</code>, <code>crop</code>, <code>flip</code>, <code>colorconvert</code>.</td></tr>
+          <tr><td data-label="Parameter">target_encoding</td><td data-label="Type">string</td><td data-label="Default"><code>bgr8</code></td><td data-label="Description">Output encoding for <code>colorconvert</code>: <code>bgr8</code> / <code>rgb8</code> / <code>mono8</code>.</td></tr>
+          <tr><td data-label="Parameter">crop_x</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop origin X (pixels from left).</td></tr>
+          <tr><td data-label="Parameter">crop_y</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop origin Y (pixels from top).</td></tr>
+          <tr><td data-label="Parameter">crop_width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop region width in pixels.</td></tr>
+          <tr><td data-label="Parameter">crop_height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop region height in pixels.</td></tr>
+          <tr><td data-label="Parameter">flip_method</td><td data-label="Type">string</td><td data-label="Default"><code>horizontal</code></td><td data-label="Description">One of <code>horizontal</code>, <code>vertical</code>, <code>both</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-title">Transport</h3>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Parameter">input_transport</td><td data-label="Type">string</td><td data-label="Default"><code>raw</code></td><td data-label="Description">image_transport plugin for the input (<code>raw</code>, <code>compressed</code>, …).</td></tr>
+          <tr><td data-label="Parameter">publish_camera_info</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Publish a transformed <code>CameraInfo</code> on the paired topic.</td></tr>
+          <tr><td data-label="Parameter">source_width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Expected source width; <code>0</code> auto-detects from the first frame.</td></tr>
+          <tr><td data-label="Parameter">source_height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Expected source height; <code>0</code> auto-detects from the first frame.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     POSITIONING
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="positioning" aria-labelledby="pos-title">
+  <div class="container">
+    <span class="section-eyebrow">06 — Positioning</span>
+    <h2 class="section-title" id="pos-title">Where Prism sits in the ecosystem</h2>
+    <div class="prose">
       <p>
-        <span class="dropcap">W</span>e present a runtime-adaptive ROS&nbsp;2 image-processing node that auto-selects between GStreamer hardware pipelines (NVIDIA&nbsp;NVMM, Intel&nbsp;VA-API) and a direct CPU fallback &mdash; preserving the exact parameter interface of <code>image_proc::ResizeNode</code>. The node validates each accelerator against the live GStreamer registry at startup, silently skipping broken ones such as <code>vaapipostproc</code> on GStreamer&nbsp;1.20. Chainable <code>resize</code>, <code>crop</code>, <code>flip</code>, and <code>colorconvert</code> actions compose inside a single process with scaled <code>CameraInfo</code> tracking the image through each stage &mdash; while remaining a two-line change in any existing launch file. Fresh A/B numbers against the current chainable architecture are pending re-measurement.
+        <strong>Isaac ROS 4.x</strong> supports only Jetson Thor, Ampere+ discrete GPUs, and
+        DGX Spark on ROS 2 Jazzy. There is no Humble support and no non-NVIDIA hardware support.
+      </p>
+      <p>
+        <strong>Isaac ROS 3.2</strong> is the last branch that supports Jetson Orin on Humble.
+        Even there, Isaac ROS supports no non-NVIDIA hardware at all.
+      </p>
+      <p>
+        <strong>REP-2007</strong> (type adaptation) and <strong>REP-2009</strong> (type
+        negotiation) are the standard ROS 2 zero-copy mechanism, available since Humble.
+        <strong>NITROS</strong> is NVIDIA's implementation of that contract. Prism does not
+        implement type adaptation — that's a deliberate tradeoff for hardware portability.
+      </p>
+      <p>
+        <a href="https://github.com/BrettRD/ros-gst-bridge" rel="noopener">ros-gst-bridge</a>
+        is adjacent prior art. Prism differs by being a ROS 2 component node with
+        live-validated backend selection, not a generic bridge.
       </p>
     </div>
 
-    <!-- ─────────── Contents ─────────── -->
-    <nav class="contents" aria-label="Table of contents">
-      <h6>Contents</h6>
-      <ol>
-        <li><a href="#motivation">Motivation</a><span class="leader"></span><span class="page">1</span></li>
-        <li><a href="#positioning">Positioning</a><span class="leader"></span><span class="page">2</span></li>
-        <li><a href="#architecture">Architecture</a><span class="leader"></span><span class="page">3</span></li>
-        <li><a href="#interface">Interface</a><span class="leader"></span><span class="page">4</span></li>
-        <li><a href="#measurements">Measurements</a><span class="leader"></span><span class="page">5</span></li>
-        <li><a href="#platforms">Platforms</a><span class="leader"></span><span class="page">6</span></li>
-        <li><a href="#setup">Setup</a><span class="leader"></span><span class="page">7</span></li>
-      </ol>
-    </nav>
+    <div class="finding" role="note">
+      <h3>Principled hardware-stack finding</h3>
+      <p>
+        Hardware acceleration on Intel requires GStreamer 1.22+ (Ubuntu 24.04 / Jazzy). On
+        stock Humble (GStreamer 1.20) the <code>vaapipostproc</code> element is present but
+        fails live validation due to a chroma-subsampling regression; the Intel iGPU path
+        gracefully falls back to direct mode. The upcoming benchmarks will quantify this.
+      </p>
+    </div>
 
-    <!-- ─────────── §1 Motivation ─────────── -->
-    <section class="body" id="motivation">
-      <div class="section-no">&sect;1</div>
-      <div class="section-body">
-        <h2>Motivation.</h2>
-        <p>
-          Hardware accelerators for image operations are abundant on modern robotics hosts &mdash; every Jetson has NVMM, every recent Intel SoC has VA-API, and most deploy targets ship with some working GStreamer pipeline. The problem is not availability; it is the cost of using them. A node that depends on a specific backend ties the node to a specific platform, and a node that tries to detect backends at build time loses to the first host that doesn't match the build assumption.
-        </p>
-        <p>
-          <code>prism::ResizeNode</code> takes the opposite approach: it probes the host at startup, validates against the live GStreamer registry, and lets the fastest <em>actually-working</em> backend win. When nothing works, it still beats <code>image_proc</code> by eliminating the <code>image_transport</code> round-trip through a direct intra-process callback.
-        </p>
-
-        <h3><span class="numeral">1.1</span> Hardware auto-detection</h3>
-        <p>
-          Startup probes <code>/dev/nvhost-*</code>, <code>/dev/nvmap</code>, and <code>/dev/dri/renderD*</code> to identify present accelerators. A second pass calls <code>gst_element_factory_find</code> to confirm the relevant GStreamer elements are registered and instantiable. Broken accelerators &mdash; such as <code>vaapipostproc</code> on GStreamer 1.20 with its chroma-subsampling regression &mdash; are <em>skipped, not attempted</em>.
-        </p>
-
-        <h3><span class="numeral">1.2</span> Hot path: zero-copy ingest, single-copy egress</h3>
-        <p>
-          The subscriber receives a <code>unique_ptr&lt;sensor_msgs::msg::Image&gt;</code> via intra-process transport. A custom <code>appsrc</code> wrapper takes ownership of the underlying buffer via <code>gst_buffer_new_wrapped_full</code> with a <code>GDestroyNotify</code> hooked into the ROS message destructor, moving the pointer &mdash; not the pixels &mdash; into the GStreamer pipeline. On the way out, the pipeline emits a fresh BGR buffer which is copied into the outgoing <code>sensor_msgs/Image</code> payload: a single copy at egress, and no DDS round-trip.
-        </p>
-
-        <h3><span class="numeral">1.3</span> Dual-mode fallback</h3>
-        <p>
-          On hosts without a working GPU path, the node bypasses GStreamer entirely and performs the resize with <code>cv::resize</code> in the subscriber callback itself. This path still benefits from zero-copy intra-process delivery and sidesteps all GStreamer initialization overhead.
-        </p>
-      </div>
-    </section>
-
-    <!-- ─────────── §2 Positioning ─────────── -->
-    <section class="body" id="positioning">
-      <div class="section-no">&sect;2</div>
-      <div class="section-body">
-        <h2>Positioning.</h2>
-        <p>
-          <code>prism_image_proc</code> is not a NITROS replacement. It targets the segment of the ROS&nbsp;2 fleet that Isaac ROS does not cover: Intel iGPU, AMD, older Jetson, Jetson Orin on Humble, and non-NVIDIA embedded hosts. The choice is to trade GPU-resident data flow between nodes for portability across hardware that the vendor-supported path excludes.
-        </p>
-
-        <h3><span class="numeral">2.1</span> The ROS&nbsp;2 acceleration landscape</h3>
-        <p>
-          <b>Isaac ROS 4.x</b> (current <code>release-4.3</code>) supports only Jetson Thor (T5000/T4000, Blackwell), x86_64 Ampere-or-newer, and DGX Spark &mdash; on ROS&nbsp;2 Jazzy. <b>Isaac ROS 3.2</b> is the last branch supporting Jetson Orin (Nano/NX/AGX) and Xavier on ROS&nbsp;2 Humble. Isaac ROS supports no non-NVIDIA hardware.
-        </p>
-        <p>
-          <b>REP-2007</b> (type adaptation) and <b>REP-2009</b> (type negotiation) are the standard ROS&nbsp;2 zero-copy mechanism since Humble; NITROS is NVIDIA's implementation. <code>prism_image_proc</code> does <em>not</em> implement type adaptation. The design decision is deliberate: a resize node that composes into any existing ROS&nbsp;2 launch file on Intel, AMD, or Orin-on-Humble is worth more than a GPU-resident one that only runs where Isaac ROS already ships.
-        </p>
-        <p>
-          <b>ros-gst-bridge</b> (<code>github.com/BrettRD/ros-gst-bridge</code>) provides <code>rosimagesrc</code>/<code>rosimagesink</code> GStreamer elements and is adjacent prior art. <code>prism_image_proc</code> differs by being a ROS&nbsp;2 component node with a single parameter surface matching <code>image_proc::ResizeNode</code>, live GStreamer-registry validation of detected accelerators, and a dual-mode fallback to <code>cv::resize</code> when no pipeline validates.
-        </p>
-
-        <h3><span class="numeral">2.2</span> A principled hardware-stack finding</h3>
-        <p>
-          Hardware acceleration on Intel requires GStreamer&nbsp;1.22+, i.e.&nbsp;Ubuntu&nbsp;24.04 / Jazzy. On stock Humble (GStreamer&nbsp;1.20) the <code>vaapipostproc</code> element is present but fails live validation due to a chroma-subsampling regression, and the Intel iGPU path gracefully falls back to direct mode. In that configuration the win comes from eliminating the <code>image_transport</code> + <code>CameraSubscriber</code> DDS round-trip, not from a GPU kernel. On Jazzy hosts or Jetson hosts, the GPU path runs and the kernel offload compounds the win.
-        </p>
-
-        <h3><span class="numeral">2.3</span> What this node is not</h3>
-        <p>
-          Not a type-adaptation framework &mdash; data crosses the egress boundary as a normal <code>sensor_msgs/Image</code> and publishing is a single copy. Not a Jetson&nbsp;Thor or Blackwell target (use Isaac ROS 4.x). Not a replacement for CUDA-resident compute graphs. It is a portable resize node that wins on the hosts Isaac ROS does not serve.
-        </p>
-      </div>
-    </section>
-
-    <!-- ─────────── §3 Architecture ─────────── -->
-    <section class="body" id="architecture">
-      <div class="section-no">&sect;3</div>
-      <div class="section-body wide">
-        <h2>Architecture.</h2>
-        <p>
-          The runtime graph resolves in three stages &mdash; probe, validate, construct &mdash; and the constructed pipeline differs based on what survives validation. The fallback chain is strictly priority-ordered: a failing probe at tier <em>N</em> drops to tier <em>N+1</em>, never the other way.
-        </p>
-
-        <div class="ascii" aria-label="Runtime decision flow diagram">                     &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
- startup  &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9654; &#9474; HardwareDetector &#9474;   probe /dev/
-                     &#9474;   NVIDIA_JETSON  &#9474;
-                     &#9474;   INTEL_VAAPI    &#9474;
-                     &#9474;   CPU_FALLBACK   &#9474;
-                     &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
-                              &#9474;
-                     &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
-                     &#9474; validate_platform&#9474;   gst_element_factory_find()
-                     &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
-                              &#9474;
-            &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
-            &#9474;                                   &#9474;
-   &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;              &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9660;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
-   &#9474; GPU available     &#9474;              &#9474; CPU fallback     &#9474;
-   &#9474; Jetson / vapostproc&#9474;              &#9474; direct mode      &#9474;
-   &#9474; appsrc &rarr; GPU &rarr;    &#9474;              &#9474; cv::resize in    &#9474;
-   &#9474; appsink           &#9474;              &#9474; subscriber cb    &#9474;
-   &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;              &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;</div>
-
-        <figcaption style="font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); padding-top: 4px;">
-          <b>Figure&nbsp;1.</b> Runtime decision flow. The validate stage is what distinguishes
-          <code>prism_image_proc</code> from na&iuml;ve auto-detect libraries: elements that probe positive
-          but fail <code>gst_element_factory_find</code> are discarded before pipeline construction.
-        </figcaption>
-      </div>
-    </section>
-
-    <!-- ─────────── §4 Interface ─────────── -->
-    <section class="body" id="interface">
-      <div class="section-no">&sect;4</div>
-      <div class="section-body wide">
-        <h2>Interface.</h2>
-        <p style="max-width: var(--measure);">
-          The node exposes the exact parameter set of <code>image_proc::ResizeNode</code>. Migration from an existing launch file is a two-token edit: the package string and the plugin class name. No upstream camera driver changes, no <code>image_transport</code> plugin changes, no message conversions.
-        </p>
-
-        <div class="diff-wrap">
-          <div class="diff-head">
-            <span>Unified diff &middot; launch file composable node entry</span>
-            <span class="path">launch/A_B_comparison.launch.py</span>
-          </div>
-          <pre class="diff"><span class="ln"><span class="num">1</span><span class="sig">  </span><span class="txt"> ComposableNode(</span></span><span class="ln del"><span class="num">2</span><span class="sig">- </span><span class="txt">     package='image_proc',</span></span><span class="ln del"><span class="num">3</span><span class="sig">- </span><span class="txt">     plugin='image_proc::ResizeNode',</span></span><span class="ln add"><span class="num">2</span><span class="sig">+ </span><span class="txt">     package='prism_image_proc',</span></span><span class="ln add"><span class="num">3</span><span class="sig">+ </span><span class="txt">     plugin='prism::ResizeNode',</span></span><span class="ln"><span class="num">4</span><span class="sig">  </span><span class="txt">     name='resize',</span></span><span class="ln"><span class="num">5</span><span class="sig">  </span><span class="txt">     parameters=[{</span></span><span class="ln"><span class="num">6</span><span class="sig">  </span><span class="txt">         'use_scale': False,</span></span><span class="ln"><span class="num">7</span><span class="sig">  </span><span class="txt">         'height':    480,</span></span><span class="ln"><span class="num">8</span><span class="sig">  </span><span class="txt">         'width':     640,</span></span><span class="ln"><span class="num">9</span><span class="sig">  </span><span class="txt">     }],</span></span><span class="ln"><span class="num">10</span><span class="sig">  </span><span class="txt"> )</span></span></pre>
-          <div class="diff-caption">
-            Two strings change. The <code>parameters</code> block is parsed by an identical schema on both sides.
-          </div>
-        </div>
-
-        <p class="callout" style="max-width: 52ch;">
-          The philosophical move is conservative: don't invent a new interface; honour the one the
-          downstream launch system already speaks, and make the faster implementation indistinguishable
-          at the config-file level.
-        </p>
-      </div>
-    </section>
-
-    <!-- ─────────── §5 Measurements ─────────── -->
-    <section class="body" id="measurements">
-      <div class="section-no">&sect;5</div>
-      <div class="section-body wide">
-        <h2>Measurements.</h2>
-        <p style="max-width: var(--measure);">
-          Benchmarks pending re-measurement &mdash; see README.
-        </p>
-      </div>
-    </section>
-
-    <!-- ─────────── §6 Platforms ─────────── -->
-    <section class="body" id="platforms">
-      <div class="section-no">&sect;6</div>
-      <div class="section-body wide">
-        <h2>Platforms.</h2>
-        <p style="max-width: var(--measure);">
-          The fallback chain is evaluated in priority order on every startup. Detection is cheap; validation
-          is the expensive step. Tiers that pass probe but fail validation are logged and demoted.
-        </p>
-
-        <div class="platform-list">
-          <div class="plat-name">NVIDIA Jetson</div>
-          <div class="plat-desc">
-            TX2, Xavier, Orin. Detected via <code>/dev/nvhost-*</code> and <code>/dev/nvmap</code>. Resize runs on CUDA + NVMM; frames never touch host memory.
-          </div>
-          <div class="plat-code">nvvideoconvert</div>
-
-          <div class="plat-name">Intel VA-API</div>
-          <div class="plat-desc">
-            Gen9+ iGPU or Arc dGPU, GStreamer 1.22+ required (1.20 <code>vaapipostproc</code> fails validation and is demoted). Resize runs on the media engine via GL bridge.
-          </div>
-          <div class="plat-code">vapostproc</div>
-
-          <div class="plat-name">CPU fallback</div>
-          <div class="plat-desc">
-            Any x86_64 or aarch64. No GStreamer initialization. Direct <code>cv::resize</code> in the subscriber callback &mdash; still faster than <code>image_proc</code> due to zero-copy intra-process delivery.
-          </div>
-          <div class="plat-code">cv::resize &middot; direct</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ─────────── §7 Setup ─────────── -->
-    <section class="body" id="setup">
-      <div class="section-no">&sect;7</div>
-      <div class="section-body wide">
-        <h2>Setup.</h2>
-        <p style="max-width: var(--measure);">
-          Ubuntu&nbsp;22.04 with ROS&nbsp;2 Humble. For VA-API hosts, ensure <code>gstreamer1.0-vaapi</code>
-          is installed and &mdash; if GStreamer is older than 1.22 &mdash; expect the direct-mode fallback.
-        </p>
-
-        <div class="code-block">
-          <div class="code-head">
-            <span>Terminal &middot; ~/ros2_ws</span>
-            <span>bash</span>
-          </div>
-<pre><span class="hash"># Clone into a colcon workspace</span>
-<span class="cmd">cd</span> ~/ros2_ws/src
-<span class="cmd">git</span> clone https://github.com/sohams25/prism-ros.git prism_image_proc
-
-<span class="hash"># Install dependencies</span>
-<span class="cmd">sudo apt install</span> ros-humble-image-proc gstreamer1.0-vaapi \
-  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
-<span class="cmd">pip install</span> flask psutil
-
-<span class="hash"># Build</span>
-<span class="cmd">cd</span> ~/ros2_ws &amp;&amp; <span class="cmd">colcon build</span> --packages-up-to prism_image_proc
-<span class="cmd">source</span> install/setup.bash
-
-<span class="hash"># Launch A/B stress test with any 4K mp4</span>
-<span class="cmd">ros2 launch</span> prism_image_proc A_B_comparison.launch.py \
-  video_path:=/path/to/4k.mp4
-
-<span class="hash"># In a second terminal — dashboard at http://localhost:8080</span>
-<span class="cmd">ros2 run</span> prism_image_proc visualize_demo.py</pre>
-        </div>
-
-        <p class="marginalia" style="max-width: var(--measure); margin-top: 14px;">
-          The launch file purges stale Fast-DDS <code>/dev/shm</code> locks, terminates orphaned
-          containers from prior runs, and pins a UDPv4-only Fast-DDS profile to silence
-          <code>RTPS_TRANSPORT_SHM</code> initialization noise.
-        </p>
-      </div>
-    </section>
-
-    <!-- ─────────── Colophon ─────────── -->
-    <footer class="colophon">
-      <div>
-        <h6>Repository</h6>
-        <p style="margin: 0 0 4px;">
-          <a href="https://github.com/sohams25/prism-ros">github.com/sohams25/prism-ros</a>
-        </p>
-        <p style="margin: 0;" class="lic">Apache-2.0 &middot; C++17 &middot; ROS 2 Humble</p>
-      </div>
-      <div>
-        <h6>Typography</h6>
-        <p style="margin: 0;">
-          Set in IBM Plex Serif, Plex Sans, and Plex Mono.
-          Rules at 1&nbsp;px. Body measure 62&nbsp;ch.
-        </p>
-      </div>
-      <div>
-        <h6>Revision</h6>
-        <p style="margin: 0;" class="lic">2026.04 &middot; benchmarks pending re-measurement</p>
-        <p style="margin: 4px 0 0;">
-          <a href="https://github.com/sohams25/prism-ros/commits/main">Changelog &uarr;</a>
-        </p>
-      </div>
-    </footer>
-
+    <h3 class="sub-title">What Prism is not</h3>
+    <ul class="not-list">
+      <li>Not a type-adaptation framework. REP-2007/2009 and NITROS already occupy that space.</li>
+      <li>Not a rewrite of <code>image_proc</code>. It's a drop-in resize-pipeline replacement with a wider chain.</li>
+      <li>Not a GStreamer-to-ROS bridge. It's a ROS 2 component that happens to dispatch to GStreamer when useful.</li>
+      <li>Not NVIDIA-only. Intel VA-API and CPU fallbacks are first-class paths.</li>
+    </ul>
   </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     BENCHMARKS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="benchmarks" aria-labelledby="bench-title">
+  <div class="container">
+    <span class="section-eyebrow">07 — Benchmarks</span>
+    <h2 class="section-title" id="bench-title">Benchmarks</h2>
+    <div class="bench">
+      <div class="label">Re-measurement in progress</div>
+      <h3>Numbers are being re-captured against the chainable architecture.</h3>
+      <p>
+        Benchmarks are being re-measured against the current chainable architecture
+        (action registry + <code>CameraInfo</code> transforms + <code>image_transport</code>
+        plumbing). The prior numbers were captured before these layers landed and no longer
+        represent the production path.
+      </p>
+      <p>
+        Methodology notes, A/B comparison results on Intel desktop, and Jetson Orin validation
+        will appear here with the v0.2.0 release.
+      </p>
+      <a class="btn btn-secondary" href="https://github.com/sohams25/prism-ros/releases" rel="noopener" style="margin-top:14px">
+        Subscribe to releases on GitHub
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l6-6M4 3h5v5"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FOOTER
+     ═══════════════════════════════════════════════════════════════ -->
+<footer>
+  <div class="container">
+    <div class="row">
+      <a href="https://github.com/sohams25/prism-ros" rel="noopener">GitHub</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/sohams25/prism-ros/releases" rel="noopener">Releases</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/sohams25/prism-ros/blob/main/CHANGELOG.md" rel="noopener">CHANGELOG</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/sohams25/prism-ros/blob/main/LICENSE" rel="noopener">License</a>
+    </div>
+    <div class="row">
+      <span>Prism is Apache-2.0 licensed. © 2026 Soham Shinde.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ─── Theme toggle (dark default, localStorage, no auto-switch) ───
+  (function () {
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = localStorage.getItem('prism-theme'); } catch (e) {}
+    if (saved === 'light' || saved === 'dark') {
+      root.setAttribute('data-theme', saved);
+    } else {
+      root.setAttribute('data-theme', 'dark');  // default on first visit
+    }
+    function syncIcons() {
+      var isDark = root.getAttribute('data-theme') === 'dark';
+      document.getElementById('icon-moon').style.display = isDark ? '' : 'none';
+      document.getElementById('icon-sun').style.display  = isDark ? 'none' : '';
+    }
+    syncIcons();
+    document.getElementById('theme-toggle').addEventListener('click', function () {
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('prism-theme', next); } catch (e) {}
+      syncIcons();
+    });
+  })();
+
+  // ─── Nav scroll state ───
+  (function () {
+    var nav = document.getElementById('nav');
+    function onScroll() {
+      if (window.scrollY > 60) nav.classList.add('scrolled');
+      else nav.classList.remove('scrolled');
+    }
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+
+  // ─── Mobile menu toggle ───
+  (function () {
+    var btn = document.getElementById('menu-toggle');
+    var links = document.getElementById('nav-links');
+    btn.addEventListener('click', function () {
+      var open = links.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    links.addEventListener('click', function (e) {
+      if (e.target.tagName === 'A') {
+        links.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+  })();
+
+  // ─── Copy buttons ───
+  (function () {
+    document.querySelectorAll('.copy').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-copy-target');
+        var el = document.getElementById(id);
+        if (!el) return;
+        var text = el.innerText;
+        var done = function () {
+          var original = btn.textContent;
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove('copied');
+          }, 1400);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta);
+          ta.select(); try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta); done();
+        }
+      });
+    });
+  })();
+</script>
 </body>
 </html>
