@@ -1,12 +1,15 @@
-#include "gst_adapt_node/pipeline_factory.hpp"
+#include "prism_image_proc/pipeline_factory.hpp"
 
 #include <gst/gst.h>
 #include <rclcpp/logging.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
-namespace gst_adapt_node
+namespace prism
 {
 
 PlatformInfo validate_platform(
@@ -52,16 +55,354 @@ PlatformInfo validate_platform(
 }
 
 // ---------------------------------------------------------------------------
+// Action: resize
+// ---------------------------------------------------------------------------
 
-PipelineFactory::PipelineFactory(
-  const PlatformInfo & platform, const PipelineConfig & config)
-: platform_(platform), config_(config)
+namespace
 {
+
+std::string resize_caps(const PipelineConfig & c)
+{
+  std::ostringstream ss;
+  ss << "video/x-raw,width=" << c.target_width
+     << ",height=" << c.target_height;
+  return ss.str();
+}
+
+std::string resize_vaapi(const PipelineConfig & c)
+{
+  // GStreamer 1.22+ with va plugin: full GL bridge, no CPU conversion.
+  if (gst_element_factory_find("vapostproc")) {
+    std::ostringstream ss;
+    ss << "glupload ! glcolorconvert"
+       << " ! video/x-raw(memory:GLMemory),format=RGBA"
+       << " ! vapostproc"
+       << " ! video/x-raw(memory:VAMemory),format=NV12"
+       << ",width=" << c.target_width
+       << ",height=" << c.target_height
+       << " ! vapostproc"
+       << " ! video/x-raw(memory:VAMemory),format=BGRA"
+       << " ! gldownload ! glcolorconvert"
+       << " ! video/x-raw,format=BGR";
+    return ss.str();
+  }
+
+  // GStreamer 1.20 with legacy vaapi: vaapipostproc chroma-loss regression.
+  // Use CPU videoscale for correctness. The appsrc/appsink architecture
+  // still buys zero-copy intra-process ingest (egress is a single copy).
+  return "videoscale ! videoconvert ! " + resize_caps(c);
+}
+
+std::string resize_jetson(const PipelineConfig & c)
+{
+  std::ostringstream ss;
+  ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
+     << " ! video/x-raw(memory:NVMM),format=NV12"
+     << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
+     << " ! video/x-raw,format=BGR"
+     << ",width=" << c.target_width
+     << ",height=" << c.target_height;
+  return ss.str();
+}
+
+std::string resize_cpu(const PipelineConfig & c)
+{
+  return "videoscale ! videoconvert ! " + resize_caps(c);
+}
+
+std::string resize_fragment(const PlatformInfo & p, const PipelineConfig & c)
+{
+  switch (p.platform) {
+    case HardwarePlatform::NVIDIA_JETSON: return resize_jetson(c);
+    case HardwarePlatform::INTEL_VAAPI:   return resize_vaapi(c);
+    case HardwarePlatform::CPU_FALLBACK:  return resize_cpu(c);
+  }
+  return resize_cpu(c);
+}
+
+// Scales the intrinsics of the input CameraInfo so the published CameraInfo
+// matches the resized image. Reads the current width/height as the "in"
+// dimensions so the transform composes correctly after a preceding crop.
+void resize_camera_info(
+  sensor_msgs::msg::CameraInfo & info, const PipelineConfig & c)
+{
+  if (info.width == 0 || info.height == 0 ||
+      c.target_width == 0 || c.target_height == 0)
+  {
+    return;
+  }
+  const double sx = static_cast<double>(c.target_width)  / info.width;
+  const double sy = static_cast<double>(c.target_height) / info.height;
+
+  info.k[0] *= sx;  info.k[2] *= sx;
+  info.k[4] *= sy;  info.k[5] *= sy;
+
+  info.p[0] *= sx;  info.p[2] *= sx;
+  info.p[5] *= sy;  info.p[6] *= sy;
+
+  info.roi.x_offset = static_cast<uint32_t>(info.roi.x_offset * sx);
+  info.roi.y_offset = static_cast<uint32_t>(info.roi.y_offset * sy);
+  info.roi.width    = static_cast<uint32_t>(info.roi.width    * sx);
+  info.roi.height   = static_cast<uint32_t>(info.roi.height   * sy);
+
+  info.width  = static_cast<uint32_t>(c.target_width);
+  info.height = static_cast<uint32_t>(c.target_height);
+  // distortion_model, d, r preserved unchanged.
 }
 
 // ---------------------------------------------------------------------------
-// Source — appsrc accepting native BGR from ROS Image messages.
+// Action: colorconvert
 // ---------------------------------------------------------------------------
+
+// Maps a sensor_msgs encoding string to the GStreamer format string.
+// Allow-list is intentionally narrow (bgr8, rgb8, mono8) — the egress code
+// in prism_image_proc.cpp publishes these three as sensor_msgs/Image.
+std::string encoding_to_gst_format(const std::string & enc)
+{
+  if (enc == "bgr8")   { return "BGR"; }
+  if (enc == "rgb8")   { return "RGB"; }
+  if (enc == "mono8")  { return "GRAY8"; }
+  throw std::invalid_argument(
+    "Unsupported target_encoding '" + enc +
+    "'. Supported: bgr8, rgb8, mono8.");
+}
+
+std::string colorconvert_fragment(const PlatformInfo & p, const PipelineConfig & c)
+{
+  const std::string fmt = encoding_to_gst_format(c.target_encoding);
+  const char * element = nullptr;
+  switch (p.platform) {
+    case HardwarePlatform::NVIDIA_JETSON: element = "nvvideoconvert"; break;
+    case HardwarePlatform::INTEL_VAAPI:
+      element = gst_element_factory_find("vapostproc") ? "vapostproc" : "videoconvert";
+      break;
+    case HardwarePlatform::CPU_FALLBACK:  element = "videoconvert"; break;
+  }
+  std::ostringstream ss;
+  ss << element << " ! video/x-raw,format=" << fmt;
+  return ss.str();
+}
+
+// No-op for intrinsics — an encoding change preserves geometry.
+void colorconvert_camera_info(
+  sensor_msgs::msg::CameraInfo & /*info*/, const PipelineConfig & /*c*/) {}
+
+// ---------------------------------------------------------------------------
+// Action: crop
+// ---------------------------------------------------------------------------
+
+std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
+{
+  if (c.crop_width <= 0 || c.crop_height <= 0 ||
+      c.crop_x < 0 || c.crop_y < 0)
+  {
+    throw std::invalid_argument(
+      "crop requires positive crop_width/crop_height and non-negative "
+      "crop_x/crop_y");
+  }
+
+  std::ostringstream ss;
+  switch (p.platform) {
+    case HardwarePlatform::NVIDIA_JETSON:
+      // nvvideoconvert supports src-* properties for input-side cropping.
+      ss << "nvvideoconvert"
+         << " src-x=" << c.crop_x
+         << " src-y=" << c.crop_y
+         << " src-width="  << c.crop_width
+         << " src-height=" << c.crop_height
+         << " ! video/x-raw,format=BGR"
+         << ",width=" << c.crop_width
+         << ",height=" << c.crop_height;
+      return ss.str();
+
+    case HardwarePlatform::INTEL_VAAPI:
+    case HardwarePlatform::CPU_FALLBACK:
+      // videocrop uses left/right/top/bottom. We translate from x,y,w,h by
+      // taking the source dims from the PipelineConfig source caps.
+      {
+        const int right  = c.source_width  - (c.crop_x + c.crop_width);
+        const int bottom = c.source_height - (c.crop_y + c.crop_height);
+        if (right < 0 || bottom < 0) {
+          throw std::invalid_argument(
+            "crop rect extends beyond source_width/source_height");
+        }
+        ss << "videocrop"
+           << " left="   << c.crop_x
+           << " right="  << right
+           << " top="    << c.crop_y
+           << " bottom=" << bottom;
+        return ss.str();
+      }
+  }
+  return ss.str();
+}
+
+void crop_camera_info(
+  sensor_msgs::msg::CameraInfo & info, const PipelineConfig & c)
+{
+  info.k[2] -= c.crop_x; info.k[5] -= c.crop_y;
+  info.p[2] -= c.crop_x; info.p[6] -= c.crop_y;
+  info.width  = static_cast<uint32_t>(c.crop_width);
+  info.height = static_cast<uint32_t>(c.crop_height);
+  info.roi.x_offset += static_cast<uint32_t>(c.crop_x);
+  info.roi.y_offset += static_cast<uint32_t>(c.crop_y);
+  info.roi.width  = static_cast<uint32_t>(c.crop_width);
+  info.roi.height = static_cast<uint32_t>(c.crop_height);
+}
+
+// ---------------------------------------------------------------------------
+// Action: flip
+// ---------------------------------------------------------------------------
+
+std::string flip_fragment(const PlatformInfo & p, const PipelineConfig & c)
+{
+  static const std::unordered_set<std::string> allowed = {
+    "none", "horizontal", "vertical"};
+  if (!allowed.count(c.flip_method)) {
+    throw std::invalid_argument(
+      "flip_method must be one of: none, horizontal, vertical (got '" +
+      c.flip_method + "')");
+  }
+  // 'none' still emits an identity convert — keeps the chain well-formed.
+  if (c.flip_method == "none") {
+    return "identity";
+  }
+
+  switch (p.platform) {
+    case HardwarePlatform::NVIDIA_JETSON:
+      // nvvideoconvert flip-method: 1=counterclockwise90, 2=rotate180,
+      // 3=clockwise90, 4=horizontal, 5=upper-right-diag, 6=vertical,
+      // 7=upper-left-diag. We use 4 (horizontal) and 6 (vertical).
+      return c.flip_method == "horizontal"
+        ? "nvvideoconvert flip-method=4"
+        : "nvvideoconvert flip-method=6";
+
+    case HardwarePlatform::INTEL_VAAPI:
+      if (gst_element_factory_find("vapostproc")) {
+        return c.flip_method == "horizontal"
+          ? "vapostproc video-direction=horiz"
+          : "vapostproc video-direction=vert";
+      }
+      // Fall through to CPU videoflip.
+      [[fallthrough]];
+    case HardwarePlatform::CPU_FALLBACK:
+      return c.flip_method == "horizontal"
+        ? "videoflip method=horizontal-flip"
+        : "videoflip method=vertical-flip";
+  }
+  return "identity";
+}
+
+void flip_camera_info(
+  sensor_msgs::msg::CameraInfo & info, const PipelineConfig & c)
+{
+  if (c.flip_method == "horizontal") {
+    info.k[2] = static_cast<double>(info.width) - info.k[2];
+    info.p[2] = static_cast<double>(info.width) - info.p[2];
+  } else if (c.flip_method == "vertical") {
+    info.k[5] = static_cast<double>(info.height) - info.k[5];
+    info.p[5] = static_cast<double>(info.height) - info.p[5];
+  }
+  // 'none': no-op.
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Action registry
+// ---------------------------------------------------------------------------
+
+const std::unordered_map<std::string, ActionDescriptor> &
+PipelineFactory::registry()
+{
+  static const std::unordered_map<std::string, ActionDescriptor> r = {
+    {"resize",       ActionDescriptor{&resize_fragment,       &resize_camera_info}},
+    {"colorconvert", ActionDescriptor{&colorconvert_fragment, &colorconvert_camera_info}},
+    {"crop",         ActionDescriptor{&crop_fragment,         &crop_camera_info}},
+    {"flip",         ActionDescriptor{&flip_fragment,         &flip_camera_info}},
+  };
+  return r;
+}
+
+std::vector<std::string> PipelineFactory::registered_actions()
+{
+  std::vector<std::string> names;
+  names.reserve(registry().size());
+  for (const auto & kv : registry()) { names.push_back(kv.first); }
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+// ---------------------------------------------------------------------------
+// Chain parser
+// ---------------------------------------------------------------------------
+
+std::vector<std::string>
+PipelineFactory::parse_action_chain(const std::string & action_str)
+{
+  auto trim = [](std::string s) {
+    const auto first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) { return std::string{}; }
+    const auto last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
+  };
+
+  std::vector<std::string> names;
+  std::string current;
+  for (char ch : action_str) {
+    if (ch == ',' || ch == '|') {
+      auto t = trim(current);
+      if (!t.empty()) { names.push_back(std::move(t)); }
+      current.clear();
+    } else {
+      current.push_back(ch);
+    }
+  }
+  auto tail = trim(current);
+  if (!tail.empty()) { names.push_back(std::move(tail)); }
+
+  if (names.empty()) {
+    throw std::invalid_argument(
+      "Action chain is empty. Expected one or more of: " +
+      [](){
+        std::ostringstream ss;
+        bool first = true;
+        for (const auto & n : registered_actions()) {
+          if (!first) { ss << ", "; }
+          first = false;
+          ss << n;
+        }
+        return ss.str();
+      }());
+  }
+
+  const auto & r = registry();
+  for (const auto & name : names) {
+    if (r.find(name) == r.end()) {
+      std::ostringstream ss;
+      ss << "Unsupported action '" << name << "'. Supported: ";
+      bool first = true;
+      for (const auto & n : registered_actions()) {
+        if (!first) { ss << ", "; }
+        first = false;
+        ss << n;
+      }
+      throw std::invalid_argument(ss.str());
+    }
+  }
+  return names;
+}
+
+// ---------------------------------------------------------------------------
+// PipelineFactory
+// ---------------------------------------------------------------------------
+
+PipelineFactory::PipelineFactory(
+  const PlatformInfo & platform, const PipelineConfig & config)
+: platform_(platform), config_(config),
+  action_names_(parse_action_chain(config.action))
+{
+}
 
 std::string PipelineFactory::source_element() const
 {
@@ -77,93 +418,42 @@ std::string PipelineFactory::source_element() const
 
 std::string PipelineFactory::sink_element() const
 {
-  return "appsink name=ros_emit caps=video/x-raw,format=(string)BGR sync=false max-buffers=1 drop=true";
+  // No caps= restriction: the appsink accepts whatever format the last
+  // action in the chain produces (BGR for resize/crop/flip; whatever
+  // target_encoding specifies for colorconvert). The node-side egress
+  // code inspects the actual GstVideoFormat and publishes an accordingly
+  // encoded sensor_msgs/Image.
+  return "appsink name=ros_emit sync=false max-buffers=1 drop=true";
 }
-
-// ---------------------------------------------------------------------------
-// Caps helper
-// ---------------------------------------------------------------------------
-
-std::string PipelineFactory::caps(const std::string & memory_type) const
-{
-  std::ostringstream ss;
-  ss << "video/x-raw";
-  if (!memory_type.empty()) {
-    ss << "(memory:" << memory_type << ")";
-  }
-  ss << ",width=" << config_.target_width
-     << ",height=" << config_.target_height;
-  return ss.str();
-}
-
-// ---------------------------------------------------------------------------
-// Platform-specific resize chains — input is BGR from appsrc.
-// ---------------------------------------------------------------------------
-
-std::string PipelineFactory::resize_vaapi() const
-{
-  // GStreamer 1.22+ with va plugin: full GL bridge, zero CPU conversion
-  if (gst_element_factory_find("vapostproc")) {
-    return "glupload ! glcolorconvert"
-           " ! video/x-raw(memory:GLMemory),format=RGBA"
-           " ! vapostproc"
-           " ! video/x-raw(memory:VAMemory),format=NV12"
-           ",width=" + std::to_string(config_.target_width) +
-           ",height=" + std::to_string(config_.target_height) +
-           " ! vapostproc"
-           " ! video/x-raw(memory:VAMemory),format=BGRA"
-           " ! gldownload ! glcolorconvert"
-           " ! video/x-raw,format=BGR";
-  }
-
-  // GStreamer 1.20 with gstreamer-vaapi: vaapipostproc has a known chroma
-  // loss bug on many Intel iGPUs (UV plane is zeroed during download).
-  // Use CPU videoscale for correctness, still benefiting from the zero-copy
-  // appsrc/appsink architecture (no rosimagesrc/rosimagesink overhead).
-  return resize_cpu();
-}
-
-// NVIDIA Jetson: CUDA cores ingest BGR directly via compute-hw=1 override.
-std::string PipelineFactory::resize_jetson() const
-{
-  std::ostringstream ss;
-  ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
-     << " ! video/x-raw(memory:NVMM),format=NV12"
-     << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
-     << " ! video/x-raw,format=BGR"
-     << ",width=" << config_.target_width
-     << ",height=" << config_.target_height;
-  return ss.str();
-}
-
-// CPU: software path.
-std::string PipelineFactory::resize_cpu() const
-{
-  return "videoscale ! videoconvert ! " + caps();
-}
-
-std::string PipelineFactory::resize_chain() const
-{
-  switch (platform_.platform) {
-    case HardwarePlatform::NVIDIA_JETSON: return resize_jetson();
-    case HardwarePlatform::INTEL_VAAPI:   return resize_vaapi();
-    case HardwarePlatform::CPU_FALLBACK:  return resize_cpu();
-  }
-  return resize_cpu();
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 std::string PipelineFactory::build() const
 {
-  if (config_.action != "resize") {
-    throw std::invalid_argument(
-      "Unsupported action '" + config_.action + "' — only 'resize' is implemented");
+  std::ostringstream ss;
+  ss << source_element();
+
+  const auto & r = registry();
+  for (const auto & name : action_names_) {
+    const auto & desc = r.at(name);
+    ss << " ! " << desc.fragment(platform_, config_);
   }
 
-  return source_element() + " ! " + resize_chain() + " ! " + sink_element();
+  ss << " ! " << sink_element();
+  return ss.str();
 }
 
-}  // namespace gst_adapt_node
+std::vector<CameraInfoTransform>
+PipelineFactory::camera_info_transforms() const
+{
+  std::vector<CameraInfoTransform> out;
+  out.reserve(action_names_.size());
+  const auto & r = registry();
+  for (const auto & name : action_names_) {
+    const auto & desc = r.at(name);
+    if (desc.transform) {
+      out.push_back(desc.transform);
+    }
+  }
+  return out;
+}
+
+}  // namespace prism
