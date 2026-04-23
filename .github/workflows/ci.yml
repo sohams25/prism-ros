@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ROS_DISTRO: humble
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src/prism_image_proc
+
+      - name: Cache apt
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt
+          key: apt-${{ runner.os }}-humble-v1
+
+      - name: Install system deps
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            ros-humble-cv-bridge \
+            ros-humble-ament-cmake-gtest \
+            python3-colcon-common-extensions
+
+      - name: colcon build
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build \
+            --symlink-install \
+            --packages-select prism_image_proc \
+            --event-handlers console_direct+
+
+      - name: colcon test
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          # Run only the gtest we own; ament_lint_auto picks up pre-existing
+          # style issues in scripts/ and is tracked separately.
+          colcon test \
+            --packages-select prism_image_proc \
+            --ctest-args -R test_direct_resize \
+            --event-handlers console_direct+
+          colcon test-result --verbose
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: colcon-log
+          path: log/

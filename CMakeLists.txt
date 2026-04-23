@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(gst_adapt_node)
+project(prism_image_proc)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -12,6 +12,7 @@ find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
+find_package(image_transport REQUIRED)
 
 # GStreamer
 find_package(PkgConfig REQUIRED)
@@ -22,54 +23,56 @@ pkg_check_modules(GST REQUIRED
 )
 
 # ---------------------------------------------------------------------------
-# Library: gst_adapt_core (hardware detection + pipeline factory)
+# Library: prism_core — hardware detection + pipeline factory
 # ---------------------------------------------------------------------------
-add_library(gst_adapt_core SHARED
+add_library(prism_core SHARED
   src/hardware_detector.cpp
   src/pipeline_factory.cpp
 )
 
-target_include_directories(gst_adapt_core PUBLIC
+target_include_directories(prism_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${GST_INCLUDE_DIRS}
 )
 
-target_link_directories(gst_adapt_core PUBLIC
+target_link_directories(prism_core PUBLIC
   ${GST_LIBRARY_DIRS}
 )
 
 # Link GStreamer via ament_target_dependencies to avoid mixing keyword/plain
 # target_link_libraries signatures (ament uses plain form internally).
-target_link_libraries(gst_adapt_core
+target_link_libraries(prism_core
   ${GST_LIBRARIES}
 )
 
-ament_target_dependencies(gst_adapt_core
+ament_target_dependencies(prism_core
   rclcpp
+  sensor_msgs
 )
 
 # ---------------------------------------------------------------------------
-# Component library: gst_adapt_node_component
+# Component library: prism_image_proc_component
 # ---------------------------------------------------------------------------
-add_library(gst_adapt_node_component SHARED
-  src/gst_adapt_node.cpp
+add_library(prism_image_proc_component SHARED
+  src/image_proc_node.cpp
 )
 
-target_link_libraries(gst_adapt_node_component
-  gst_adapt_core
+target_link_libraries(prism_image_proc_component
+  prism_core
 )
 
-ament_target_dependencies(gst_adapt_node_component
+ament_target_dependencies(prism_image_proc_component
   rclcpp
   rclcpp_components
   sensor_msgs
   std_msgs
   cv_bridge
+  image_transport
 )
 
-rclcpp_components_register_nodes(gst_adapt_node_component
-  "gst_adapt_node::ResizeNode"
+rclcpp_components_register_nodes(prism_image_proc_component
+  "prism::ImageProcNode"
 )
 
 # ---------------------------------------------------------------------------
@@ -92,7 +95,7 @@ ament_target_dependencies(synthetic_4k_pub_component
 )
 
 rclcpp_components_register_nodes(synthetic_4k_pub_component
-  "gst_adapt_node::Synthetic4kPubNode"
+  "prism::Synthetic4kPubNode"
 )
 
 # ---------------------------------------------------------------------------
@@ -121,34 +124,34 @@ ament_target_dependencies(media_streamer_component
 )
 
 rclcpp_components_register_nodes(media_streamer_component
-  "gst_adapt_node::MediaStreamerNode"
+  "prism::MediaStreamerNode"
 )
 
 # ---------------------------------------------------------------------------
 # Standalone executable
 # ---------------------------------------------------------------------------
-add_executable(gst_adapt_node
+add_executable(prism_image_proc
   src/main.cpp
 )
 
-target_link_libraries(gst_adapt_node
-  gst_adapt_node_component
+target_link_libraries(prism_image_proc
+  prism_image_proc_component
 )
 
-ament_target_dependencies(gst_adapt_node
+ament_target_dependencies(prism_image_proc
   rclcpp
 )
 
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-install(TARGETS gst_adapt_core gst_adapt_node_component synthetic_4k_pub_component media_streamer_component
+install(TARGETS prism_core prism_image_proc_component synthetic_4k_pub_component media_streamer_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 
-install(TARGETS gst_adapt_node
+install(TARGETS prism_image_proc
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -176,6 +179,18 @@ install(FILES
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_direct_resize test/test_direct_resize.cpp)
+  target_link_libraries(test_direct_resize prism_core)
+  target_include_directories(test_direct_resize PRIVATE
+    ${GST_INCLUDE_DIRS}
+  )
+  target_link_directories(test_direct_resize PRIVATE
+    ${GST_LIBRARY_DIRS}
+  )
+  target_link_libraries(test_direct_resize ${GST_LIBRARIES})
+  ament_target_dependencies(test_direct_resize sensor_msgs)
 endif()
 
 ament_package()
