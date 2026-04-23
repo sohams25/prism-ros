@@ -275,6 +275,42 @@ High-impact items, ranked by effort-to-reward:
 - [ ] **H.264/H.265 compressed-ingest branch** — keep remote-cam frames on GPU from network → resize
 - [ ] **CI integration tests**
 
+## Migrating from GstAdaptNode
+
+This repository was previously published as `GstAdaptNode` / `gst_adapt_node`
+and is now `Prism` / `prism_image_proc`. The rename covers the repo, the
+ROS 2 package, the C++ namespace, and the class identity:
+
+| What | Before | After |
+|---|---|---|
+| GitHub repo | `sohams25/GstAdaptNode` | `sohams25/prism-ros` |
+| ROS 2 package | `gst_adapt_node` | `prism_image_proc` |
+| C++ namespace | `gst_adapt_node::` | `prism::` |
+| Chainable base class | `gst_adapt_node::ResizeNode` | `prism::ImageProcNode` |
+| Drop-in resize plugin | `gst_adapt_node::ResizeNode` | `prism::ResizeNode` (thin wrapper) |
+| Include guards | `GST_ADAPT_NODE__*_HPP_` | `PRISM_IMAGE_PROC__*_HPP_` |
+
+Action items for downstream consumers:
+
+1. **Update the remote URL after the GitHub rename**:
+   ```bash
+   git remote set-url origin git@github.com:sohams25/prism-ros.git
+   ```
+2. **Package name**: `rosdep install`, `colcon build --packages-select`, and
+   `source install/setup.bash` now use **`prism_image_proc`**.
+3. **Includes**: `#include "gst_adapt_node/gst_adapt_node.hpp"` →
+   `#include "prism_image_proc/image_proc_node.hpp"`.
+4. **Class references**: replace `gst_adapt_node::ResizeNode` with either
+   `prism::ImageProcNode` (the general chainable base) or `prism::ResizeNode`
+   (the thin wrapper that pins `action="resize"` by default — preserves the
+   one-line launch-file swap against `image_proc::ResizeNode`).
+5. **New component types** now also available for drop-in use:
+   `prism::CropNode` (pins `action="crop"`) and `prism::ColorConvertNode`
+   (pins `action="colorconvert"`). All three wrappers accept the full
+   parameter surface of `prism::ImageProcNode`.
+6. **Launch files**: `package='prism_image_proc'` and a plugin string of
+   your choice from the four registered components.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

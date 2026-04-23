@@ -140,7 +140,7 @@ def generate_launch_description():
             ),
             ComposableNode(
                 package='prism_image_proc',
-                plugin='prism::ImageProcNode',
+                plugin='prism::ResizeNode',
                 name='accel_resize',
                 parameters=[{
                     'input_topic': '/accelerated/image_raw',

@@ -56,6 +56,9 @@ ament_target_dependencies(prism_core
 # ---------------------------------------------------------------------------
 add_library(prism_image_proc_component SHARED
   src/image_proc_node.cpp
+  src/resize_node.cpp
+  src/crop_node.cpp
+  src/color_convert_node.cpp
 )
 
 target_link_libraries(prism_image_proc_component
@@ -73,6 +76,9 @@ ament_target_dependencies(prism_image_proc_component
 
 rclcpp_components_register_nodes(prism_image_proc_component
   "prism::ImageProcNode"
+  "prism::ResizeNode"
+  "prism::CropNode"
+  "prism::ColorConvertNode"
 )
 
 # ---------------------------------------------------------------------------

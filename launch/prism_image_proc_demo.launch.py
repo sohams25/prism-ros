@@ -18,7 +18,7 @@ def generate_launch_description():
         composable_node_descriptions=[
             ComposableNode(
                 package='prism_image_proc',
-                plugin='prism::ImageProcNode',
+                plugin='prism::ResizeNode',
                 name='resize_node',
                 parameters=[params_file],
                 extra_arguments=[{'use_intra_process_comms': True}],
