@@ -215,93 +215,147 @@ On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present b
 
 ## Benchmarks
 
-A/B captures against stock ROS 2 Humble image processing on an Intel
-desktop. Source is a 3840×2160 H.264 clip streamed at 10 Hz via
-`prism::MediaStreamerNode`. Both sides run in component containers;
-latency is per-frame from publish stamp to subscriber receive.
-Methodology, per-run CSVs, and reproduction commands live in
-[`bench/`](bench/); the commit-pinned summary is
-[`bench/results/summary.md`](bench/results/summary.md).
+A/B captures against stock ROS 2 Humble `image_proc` on two hosts. 4K BGR8
+input from `prism::MediaStreamerNode` (3840×2160 H.264 → BGR8) at 10 Hz,
+120 s sustained per operation, first 10 s dropped as warmup. Two
+`component_container` processes per run; latency is per-frame from publish
+stamp to subscriber receive. Methodology and per-run CSVs live in
+[`bench/`](bench/); commit-pinned per-host summaries are
+[`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md)
+and [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
 
-### Per-kernel latency (3840×2160 @ 10 Hz)
+### Intel desktop, GStreamer 1.20, direct-mode fallback
 
-A/B against the closest upstream `image_proc` C++ component for each
-Prism action. Both sides sustain the 10 Hz source.
+`vapostproc` fails live validation on stock Humble (chroma-subsampling
+regression on GStreamer 1.20); the GPU resize kernel does not run. The
+delta below is intra-process delivery plus elimination of DDS round-trips,
+not GPU offload.
 
-| Action   | Stock plugin                       | Prism median (ms) | Stock median (ms) | Δ        |
-| -------- | ---------------------------------- | ----------------: | ----------------: | -------: |
-| `resize` | `image_proc::ResizeNode`           |              5.67 |             13.61 |  −58.3 % |
-| `crop`   | `image_proc::CropDecimateNode`     |             13.40 |             28.80 |  −53.5 % |
+#### resize (3840×2160 → 640×480 @ 10 Hz)
 
-Both sides are C++ component-container nodes. The delta is kernel
-plus intra-process delivery cost.
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 10.77 | 4.55 | -6.22 | -57.8 % |
+| mean latency (ms)   | 13.42 | 7.74 | -5.68 | -42.4 % |
+| p95 latency (ms)    | 20.39 | 13.93 | | |
+| p99 latency (ms)    | 26.66 | 23.69 | | |
+| mean CPU (%)        | 60.8  | 56.2  | | |
+| mean RSS (MB)       | 806   | 748   | | |
+| realised fps        | 10.01 | 10.00 | | |
 
-### Pipeline architecture (3840×2160 @ 10 Hz)
+#### crop (3840×2160 → 2560×1440 @ 10 Hz)
 
-A three-stage `crop → resize → colorconvert` chain. Stock side runs
-three separate `image_proc` nodes DDS-piped together; Prism runs the
-full chain inside one `prism::ImageProcNode` with intra-process
-composition.
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 22.65 | 4.27  | -18.38 | -81.1 % |
+| mean latency (ms)   | 24.76 | 8.68  | -16.09 | -65.0 % |
+| p95 latency (ms)    | 38.27 | 20.56 | | |
+| p99 latency (ms)    | 49.21 | 34.55 | | |
+| mean CPU (%)        | 63.9  | 57.7  | | |
+| mean RSS (MB)       | 830   | 747   | | |
+| realised fps        | 10.01 | 10.01 | | |
 
-| Pipeline                       | Prism median (ms) | Stock median (ms) | Δ        |
-| ------------------------------ | ----------------: | ----------------: | -------: |
-| `crop → resize → colorconvert` |             12.90 |             75.47 |  −82.9 % |
+#### colorconvert (BGR8 → RGB8 @ 10 Hz)
 
-The delta here is dominated by Prism's single-pipeline architecture
-avoiding two intermediate DDS round-trips on the stock side, not by
-per-kernel speedup. See the chain-composition caveat in
-[`bench/METHODOLOGY.md`](bench/METHODOLOGY.md).
+`image_proc` ships no dedicated colorconvert C++ node, so the stock-side
+reference is a Python `rclpy` subscriber. At 4K it cannot drain the topic;
+latency rises unboundedly.
 
-### Stock Python subscriber throughput ceiling (3840×2160 @ 10 Hz)
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 2323.65 | 2.99  | -2320.66 | -99.9 % |
+| mean latency (ms)   | 2317.22 | 7.33  | -2309.89 | -99.7 % |
+| p95 latency (ms)    | 2397.21 | 13.34 | | |
+| p99 latency (ms)    | 2430.18 | 23.37 | | |
+| mean CPU (%)        | 157.5   | 49.9  | | |
+| mean RSS (MB)       | 1221    | 747   | | |
+| realised fps        | 0.76    | 10.01 | | |
 
-`image_proc` ships no dedicated colorconvert node, so the closest
-available stock-side reference is a Python `rclpy` subscriber that
-performs the conversion (`cv_bridge` where it works, NumPy fallback
-where it does not — see methodology). At 4K BGR8 @ 10 Hz the source
-publishes ~240 MB/s; the Python subscriber cannot drain it. Frames
-queue in the receive buffer with unbounded latency.
+#### chain (`crop → resize → colorconvert` @ 10 Hz)
 
-| Side                                          | Realised fps | Median latency (ms) |
-| --------------------------------------------- | -----------: | ------------------: |
-| Prism (`prism::ColorConvertNode`, C++)        |        10.01 |               12.57 |
-| Stock (`rclpy` Image subscriber, NumPy back)  |         0.85 |             2173.09 |
+Stock side runs three separate `image_proc`/`rclpy` nodes DDS-piped
+together; Prism runs the full chain inside one `prism::ImageProcNode`.
 
-This is **not** a kernel-level efficiency comparison. It is a
-structural finding about the ROS 2 Python subscriber path on large
-`sensor_msgs/Image` messages: GIL plus `rclpy` deserialization plus
-per-callback memory copies cannot keep up with 4K @ 10 Hz on a single
-core, regardless of how fast the conversion arithmetic itself runs.
-Prism's C++ component path side-steps the bottleneck entirely. A C++
-stock-side colorconvert reference would close this gap; `image_proc`
-does not ship one. Methodology, the `cv_bridge` segfault context, and
-the abandoned 1080p re-measurement are recorded in
-[`bench/METHODOLOGY.md`](bench/METHODOLOGY.md).
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 76.28  | 12.86 | -63.43 | -83.1 % |
+| mean latency (ms)   | 76.43  | 8.86  | -67.57 | -88.4 % |
+| p95 latency (ms)    | 97.74  | 14.09 | | |
+| p99 latency (ms)    | 107.56 | 24.38 | | |
+| mean CPU (%)        | 103.2  | 49.2  | | |
+| mean RSS (MB)       | 885    | 747   | | |
+| realised fps        | 10.01  | 10.01 | | |
+
+### Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, direct-mode fallback
+
+`nvvideoconvert` is not packaged in the `dustynv/ros:humble-desktop-l4t-r36.2.0`
+image; Prism's GPU path fails live validation on this host and falls back to
+`cv::resize`. On the stock side, `image_proc::ResizeNode` did not publish
+frames in this container (likely an `image_proc` runtime issue specific to
+this image); only the Prism side has data for `resize` and `chain`. The
+`crop` and `colorconvert` rows are full A/B comparisons.
+
+#### resize (3840×2160 → 640×480 @ 10 Hz)
+
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | — | 7.61  | — | — |
+| mean latency (ms)   | — | 8.88  | — | — |
+| p95 latency (ms)    | — | 11.43 | | |
+| p99 latency (ms)    | — | 22.90 | | |
+| mean CPU (%)        | 116.3 | 124.9 | | |
+| mean RSS (MB)       | 368   | 374   | | |
+| realised fps        | — | 9.99  | | |
+
+#### crop (3840×2160 → 2560×1440 @ 10 Hz)
+
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 53.48  | 9.47  | -44.01 | -82.3 % |
+| mean latency (ms)   | 108.59 | 18.16 | -90.43 | -83.3 % |
+| p95 latency (ms)    | 486.50 | 48.22 | | |
+| p99 latency (ms)    | 816.97 | 211.48| | |
+| mean CPU (%)        | 155.8  | 128.2 | | |
+| mean RSS (MB)       | 375    | 373   | | |
+| realised fps        | 9.91   | 9.98  | | |
+
+#### colorconvert (BGR8 → RGB8 @ 10 Hz)
+
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 8170.05  | 9.27   | -8160.78 | -99.9 % |
+| mean latency (ms)   | 8353.75  | 15.98  | -8337.77 | -99.8 % |
+| p95 latency (ms)    | 10119.81 | 30.95  | | |
+| p99 latency (ms)    | 10151.45 | 212.35 | | |
+| mean CPU (%)        | 262.9    | 127.9  | | |
+| mean RSS (MB)       | 1345     | 371    | | |
+| realised fps        | 0.25     | 9.97   | | |
+
+#### chain (`crop → resize → colorconvert` @ 10 Hz)
+
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | — | 9.00  | — | — |
+| mean latency (ms)   | — | 11.76 | — | — |
+| p95 latency (ms)    | — | 21.78 | | |
+| p99 latency (ms)    | — | 32.06 | | |
+| mean CPU (%)        | 133.5 | 128.7 | | |
+| mean RSS (MB)       | 398   | 363   | | |
+| realised fps        | — | 9.97  | | |
 
 ### Reproducing
 
 ```bash
 python3 bench/run.py --operation resize --video /path/to/4k.mp4 \
-  --duration 120 --output-dir bench/results/
+  --duration 120 --warmup 10 --output-dir bench/results/
 python3 bench/analyze.py --results-dir bench/results/ \
   --output bench/results/summary.json
+python3 bench/emit_simple_summary.py --summary bench/results/summary.json \
+  --host-label "<host description>" --gst-version "$(gst-launch-1.0 --version | head -1)" \
+  --out bench/results/<host>_simple_summary.md
 ```
 
 Repeat with `--operation {crop,colorconvert,chain}`.
-
-### Jetson (Orin) — pending
-
-The GPU path is implemented for Jetson via `nvvideoconvert` with NVMM
-buffer-types, and the fallback chain promotes it first when
-`/dev/nvhost-*` and `/dev/nvmap` probe positive. A 60-second A/B
-capture on Orin (Nano / NX / AGX) is pending — reproduce with:
-
-```bash
-ros2 launch prism_image_proc A_B_comparison.launch.py \
-  video_path:=/path/to/4k_video.mp4
-```
-
-Numbers and a short commentary will be added to this section once the
-capture is complete.
 
 ## Development
 

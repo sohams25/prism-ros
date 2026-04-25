@@ -664,7 +664,9 @@
           that auto-detects host accelerators at runtime and chooses the fastest available
           backend: a GStreamer pipeline with zero-copy intra-process ingest on supported GPUs
           (Intel VA-API, NVIDIA Jetson NVMM), or a direct <code>cv::resize</code> fallback when
-          no usable GPU path is present.
+          no usable GPU path is present. Egress to the outgoing <code>sensor_msgs/Image</code>
+          is a single copy; the claim is zero-copy ingest, no DDS round-trip, not end-to-end
+          zero-copy.
         </p>
         <ul class="bullets">
           <li>Drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline</li>
@@ -1003,121 +1005,172 @@ source install/setup.bash</code></pre>
     <h2 class="section-title" id="bench-title">Benchmarks</h2>
 
     <p class="lede">
-      A/B captures against stock ROS 2 Humble image processing on an Intel desktop. The
-      source is a 3840×2160 H.264 clip streamed at 10 Hz via
-      <code>prism::MediaStreamerNode</code>. Both sides run in component containers;
-      latency is per-frame from publish stamp to subscriber receive. Methodology,
-      per-run CSVs, and reproduction commands live in
+      A/B captures against stock ROS 2 Humble <code>image_proc</code> on two hosts.
+      4K BGR8 input from <code>prism::MediaStreamerNode</code> (3840×2160 H.264 → BGR8)
+      at 10 Hz, 120 s sustained per operation, first 10 s dropped as warmup. Two
+      <code>component_container</code> processes per run; latency is per-frame from
+      publish stamp to subscriber receive. Methodology and per-run CSVs live in
       <a href="https://github.com/sohams25/prism-ros/tree/main/bench"><code>bench/</code></a>;
-      the commit-pinned summary is
-      <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/summary.md"><code>bench/results/summary.md</code></a>.
+      commit-pinned per-host summaries are
+      <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/intel_desktop_simple_summary.md"><code>intel_desktop_simple_summary.md</code></a>
+      and
+      <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/orin_simple_summary.md"><code>orin_simple_summary.md</code></a>.
     </p>
 
-    <h3 class="sub-title">Per-kernel latency (3840×2160 @ 10 Hz)</h3>
+    <h3 class="sub-title">Intel desktop, GStreamer 1.20, direct-mode fallback</h3>
     <p>
-      A/B against the closest upstream <code>image_proc</code> C++ component for each
-      Prism action. Both sides sustain the 10 Hz source. The delta is kernel plus
-      intra-process delivery cost.
+      <code>vapostproc</code> fails live validation on stock Humble (chroma-subsampling
+      regression on GStreamer 1.20); the GPU resize kernel does not run. The delta below
+      is intra-process delivery plus elimination of DDS round-trips, not GPU offload.
     </p>
+
+    <h4>resize (3840×2160 → 640×480 @ 10 Hz)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead>
-          <tr><th>Action</th><th>Stock plugin</th><th>Prism median</th><th>Stock median</th><th>Δ</th></tr>
-        </thead>
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr>
-            <td data-label="Action"><code>resize</code></td>
-            <td data-label="Stock plugin"><code>image_proc::ResizeNode</code></td>
-            <td data-label="Prism median">5.67 ms</td>
-            <td data-label="Stock median">13.61 ms</td>
-            <td data-label="Δ">−58.3 %</td>
-          </tr>
-          <tr>
-            <td data-label="Action"><code>crop</code></td>
-            <td data-label="Stock plugin"><code>image_proc::CropDecimateNode</code></td>
-            <td data-label="Prism median">13.40 ms</td>
-            <td data-label="Stock median">28.80 ms</td>
-            <td data-label="Δ">−53.5 %</td>
-          </tr>
+          <tr><td>median latency (ms)</td><td>10.77</td><td>4.55</td><td>-6.22</td><td>-57.8 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>13.42</td><td>7.74</td><td>-5.68</td><td>-42.4 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>20.39</td><td>13.93</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>26.66</td><td>23.69</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>60.8</td><td>56.2</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>806</td><td>748</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>10.01</td><td>10.00</td><td></td><td></td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3 class="sub-title">Pipeline architecture (3840×2160 @ 10 Hz)</h3>
-    <p>
-      A three-stage <code>crop → resize → colorconvert</code> chain. Stock side runs
-      three separate <code>image_proc</code> nodes DDS-piped together; Prism runs the
-      full chain inside one <code>prism::ImageProcNode</code> with intra-process
-      composition.
-    </p>
+    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead>
-          <tr><th>Pipeline</th><th>Prism median</th><th>Stock median</th><th>Δ</th></tr>
-        </thead>
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr>
-            <td data-label="Pipeline"><code>crop → resize → colorconvert</code></td>
-            <td data-label="Prism median">12.90 ms</td>
-            <td data-label="Stock median">75.47 ms</td>
-            <td data-label="Δ">−82.9 %</td>
-          </tr>
+          <tr><td>median latency (ms)</td><td>22.65</td><td>4.27</td><td>-18.38</td><td>-81.1 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>24.76</td><td>8.68</td><td>-16.09</td><td>-65.0 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>38.27</td><td>20.56</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>49.21</td><td>34.55</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>63.9</td><td>57.7</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>830</td><td>747</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>10.01</td><td>10.01</td><td></td><td></td></tr>
         </tbody>
       </table>
-    </div>
-    <div class="finding" role="note">
-      <h3>The chain delta is architectural, not kernel</h3>
-      <p>
-        The chain delta is dominated by Prism's single-pipeline architecture avoiding
-        two intermediate DDS round-trips on the stock side, not by any per-kernel
-        speedup. The per-kernel rows above carry the kernel claim; the chain row
-        carries the architectural claim. See the chain-composition caveat in
-        <a href="https://github.com/sohams25/prism-ros/blob/main/bench/METHODOLOGY.md"><code>bench/METHODOLOGY.md</code></a>.
-      </p>
     </div>
 
-    <h3 class="sub-title">Stock Python subscriber throughput ceiling (3840×2160 @ 10 Hz)</h3>
+    <h4>colorconvert (BGR8 → RGB8 @ 10 Hz)</h4>
     <p>
-      <code>image_proc</code> ships no dedicated colorconvert node, so the closest
-      available stock-side reference is a Python <code>rclpy</code> subscriber that
-      performs the conversion (<code>cv_bridge</code> where it works, NumPy fallback
-      where it does not — see methodology). At 4K BGR8 @ 10 Hz the source publishes
-      ~240 MB/s; the Python subscriber cannot drain it. Frames queue in the receive
-      buffer with unbounded latency.
+      <code>image_proc</code> ships no dedicated colorconvert C++ node, so the
+      stock-side reference is a Python <code>rclpy</code> subscriber. At 4K it cannot
+      drain the topic; latency rises unboundedly.
     </p>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead>
-          <tr><th>Side</th><th>Realised fps</th><th>Median latency</th></tr>
-        </thead>
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr>
-            <td data-label="Side">Prism (<code>prism::ColorConvertNode</code>, C++)</td>
-            <td data-label="Realised fps">10.01</td>
-            <td data-label="Median latency">12.57 ms</td>
-          </tr>
-          <tr>
-            <td data-label="Side">Stock (<code>rclpy</code> Image subscriber, NumPy back)</td>
-            <td data-label="Realised fps">0.85</td>
-            <td data-label="Median latency">2173.09 ms</td>
-          </tr>
+          <tr><td>median latency (ms)</td><td>2323.65</td><td>2.99</td><td>-2320.66</td><td>-99.9 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>2317.22</td><td>7.33</td><td>-2309.89</td><td>-99.7 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>2397.21</td><td>13.34</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>2430.18</td><td>23.37</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>157.5</td><td>49.9</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>1221</td><td>747</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>0.76</td><td>10.01</td><td></td><td></td></tr>
         </tbody>
       </table>
     </div>
-    <div class="finding" role="note">
-      <h3>Why the colorconvert row is not a kernel comparison</h3>
-      <p>
-        This row is a structural finding about the ROS 2 Python subscriber path on
-        large <code>sensor_msgs/Image</code> messages, not a kernel-level efficiency
-        claim. GIL plus <code>rclpy</code> deserialization plus per-callback memory
-        copies cannot keep up with 4K @ 10 Hz on a single core, regardless of how
-        fast the conversion arithmetic itself runs. Prism's C++ component path
-        side-steps the bottleneck entirely. A C++ stock-side colorconvert reference
-        would close this gap; <code>image_proc</code> does not ship one. Methodology,
-        the <code>cv_bridge</code> segfault context, and the abandoned 1080p
-        re-measurement are recorded in
-        <a href="https://github.com/sohams25/prism-ros/blob/main/bench/METHODOLOGY.md"><code>bench/METHODOLOGY.md</code></a>.
-      </p>
+
+    <h4>chain (<code>crop → resize → colorconvert</code> @ 10 Hz)</h4>
+    <p>
+      Stock side runs three separate <code>image_proc</code>/<code>rclpy</code> nodes
+      DDS-piped together; Prism runs the full chain inside one
+      <code>prism::ImageProcNode</code>.
+    </p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>76.28</td><td>12.86</td><td>-63.43</td><td>-83.1 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>76.43</td><td>8.86</td><td>-67.57</td><td>-88.4 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>97.74</td><td>14.09</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>107.56</td><td>24.38</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>103.2</td><td>49.2</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>885</td><td>747</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>10.01</td><td>10.01</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-title">Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, direct-mode fallback</h3>
+    <p>
+      <code>nvvideoconvert</code> is not packaged in the
+      <code>dustynv/ros:humble-desktop-l4t-r36.2.0</code> image; Prism's GPU path fails
+      live validation on this host and falls back to <code>cv::resize</code>. On the
+      stock side, <code>image_proc::ResizeNode</code> did not publish frames in this
+      container (likely an <code>image_proc</code> runtime issue specific to this image);
+      only the Prism side has data for <code>resize</code> and <code>chain</code>.
+      <code>crop</code> and <code>colorconvert</code> are full A/B comparisons.
+    </p>
+
+    <h4>resize (3840×2160 → 640×480 @ 10 Hz)</h4>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>—</td><td>7.61</td><td>—</td><td>—</td></tr>
+          <tr><td>mean latency (ms)</td><td>—</td><td>8.88</td><td>—</td><td>—</td></tr>
+          <tr><td>p95 latency (ms)</td><td>—</td><td>11.43</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>—</td><td>22.90</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>116.3</td><td>124.9</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>368</td><td>374</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>—</td><td>9.99</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz)</h4>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>53.48</td><td>9.47</td><td>-44.01</td><td>-82.3 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>108.59</td><td>18.16</td><td>-90.43</td><td>-83.3 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>486.50</td><td>48.22</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>816.97</td><td>211.48</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>155.8</td><td>128.2</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>375</td><td>373</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>9.91</td><td>9.98</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>colorconvert (BGR8 → RGB8 @ 10 Hz)</h4>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>8170.05</td><td>9.27</td><td>-8160.78</td><td>-99.9 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>8353.75</td><td>15.98</td><td>-8337.77</td><td>-99.8 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>10119.81</td><td>30.95</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>10151.45</td><td>212.35</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>262.9</td><td>127.9</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>1345</td><td>371</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>0.25</td><td>9.97</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>chain (<code>crop → resize → colorconvert</code> @ 10 Hz)</h4>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>—</td><td>9.00</td><td>—</td><td>—</td></tr>
+          <tr><td>mean latency (ms)</td><td>—</td><td>11.76</td><td>—</td><td>—</td></tr>
+          <tr><td>p95 latency (ms)</td><td>—</td><td>21.78</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>—</td><td>32.06</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>133.5</td><td>128.7</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>398</td><td>363</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>—</td><td>9.97</td><td></td><td></td></tr>
+        </tbody>
+      </table>
     </div>
 
     <h3 class="sub-title">Reproducing</h3>
@@ -1127,32 +1180,14 @@ source install/setup.bash</code></pre>
         <button class="copy" data-copy-target="code-bench-repro" type="button">Copy</button>
       </div>
 <pre class="code-body" id="code-bench-repro"><code>python3 bench/run.py --operation resize --video /path/to/4k.mp4 <span class="tok-p">\</span>
-  --duration 120 --output-dir bench/results/
+  --duration 120 --warmup 10 --output-dir bench/results/
 python3 bench/analyze.py --results-dir bench/results/ <span class="tok-p">\</span>
-  --output bench/results/summary.json</code></pre>
+  --output bench/results/summary.json
+python3 bench/emit_simple_summary.py --summary bench/results/summary.json <span class="tok-p">\</span>
+  --host-label "&lt;host description&gt;" --gst-version "$(gst-launch-1.0 --version | head -1)" <span class="tok-p">\</span>
+  --out bench/results/&lt;host&gt;_simple_summary.md</code></pre>
     </div>
     <p>Repeat with <code>--operation {crop,colorconvert,chain}</code>.</p>
-
-    <h3 class="sub-title">Jetson (Orin) — pending</h3>
-    <p>
-      The GPU path is implemented for Jetson via <code>nvvideoconvert</code> with
-      NVMM buffer-types, and the fallback chain promotes it first when
-      <code>/dev/nvhost-*</code> and <code>/dev/nvmap</code> probe positive. A
-      60-second A/B capture on Orin (Nano / NX / AGX) is pending — reproduce
-      with:
-    </p>
-    <div class="code">
-      <div class="code-header">
-        <span>shell</span>
-        <button class="copy" data-copy-target="code-bench-orin" type="button">Copy</button>
-      </div>
-<pre class="code-body" id="code-bench-orin"><code>ros2 launch prism_image_proc A_B_comparison.launch.py <span class="tok-p">\</span>
-  video_path:=/path/to/4k_video.mp4</code></pre>
-    </div>
-    <p>
-      Numbers and a short commentary will be added to this section once the
-      capture is complete.
-    </p>
   </div>
 </section>
 
