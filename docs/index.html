@@ -854,8 +854,8 @@ source install/setup.bash</code></pre>
           <tr>
             <td data-label="Priority">1</td>
             <td data-label="Platform">NVIDIA Jetson</td>
-            <td data-label="Detection"><code>/etc/nv_tegra_release</code> + <code>nvvideoconvert</code> available</td>
-            <td data-label="Processing">GStreamer NVMM zero-copy</td>
+            <td data-label="Detection"><code>/dev/nvhost-*</code>, <code>/dev/nvmap</code></td>
+            <td data-label="Processing">GStreamer <code>nvvideoconvert</code> (CUDA / NVMM)</td>
           </tr>
           <tr>
             <td data-label="Priority">2</td>
@@ -1099,7 +1099,7 @@ source install/setup.bash</code></pre>
           <tr>
             <td data-label="Side">Stock (<code>rclpy</code> Image subscriber, NumPy back)</td>
             <td data-label="Realised fps">0.85</td>
-            <td data-label="Median latency">2173 ms</td>
+            <td data-label="Median latency">2173.09 ms</td>
           </tr>
         </tbody>
       </table>
@@ -1119,6 +1119,40 @@ source install/setup.bash</code></pre>
         <a href="https://github.com/sohams25/prism-ros/blob/main/bench/METHODOLOGY.md"><code>bench/METHODOLOGY.md</code></a>.
       </p>
     </div>
+
+    <h3 class="sub-title">Reproducing</h3>
+    <div class="code">
+      <div class="code-header">
+        <span>shell</span>
+        <button class="copy" data-copy-target="code-bench-repro" type="button">Copy</button>
+      </div>
+<pre class="code-body" id="code-bench-repro"><code>python3 bench/run.py --operation resize --video /path/to/4k.mp4 <span class="tok-p">\</span>
+  --duration 120 --output-dir bench/results/
+python3 bench/analyze.py --results-dir bench/results/ <span class="tok-p">\</span>
+  --output bench/results/summary.json</code></pre>
+    </div>
+    <p>Repeat with <code>--operation {crop,colorconvert,chain}</code>.</p>
+
+    <h3 class="sub-title">Jetson (Orin) — pending</h3>
+    <p>
+      The GPU path is implemented for Jetson via <code>nvvideoconvert</code> with
+      NVMM buffer-types, and the fallback chain promotes it first when
+      <code>/dev/nvhost-*</code> and <code>/dev/nvmap</code> probe positive. A
+      60-second A/B capture on Orin (Nano / NX / AGX) is pending — reproduce
+      with:
+    </p>
+    <div class="code">
+      <div class="code-header">
+        <span>shell</span>
+        <button class="copy" data-copy-target="code-bench-orin" type="button">Copy</button>
+      </div>
+<pre class="code-body" id="code-bench-orin"><code>ros2 launch prism_image_proc A_B_comparison.launch.py <span class="tok-p">\</span>
+  video_path:=/path/to/4k_video.mp4</code></pre>
+    </div>
+    <p>
+      Numbers and a short commentary will be added to this section once the
+      capture is complete.
+    </p>
   </div>
 </section>
 
