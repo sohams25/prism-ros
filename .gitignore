@@ -13,3 +13,5 @@ docs/ROSCON_*.md
 docs/roscon_*.md
 ROSCON_*.md
 roscon_*.md
+.claude/
+CLAUDE.md
