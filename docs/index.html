@@ -1153,9 +1153,9 @@ python3 bench/emit_simple_summary.py --summary bench/results/summary.json <span 
         <strong>Orin capture against an image that ships <code>nvvideoconvert</code>.</strong>
         The Orin numbers above are taken with Prism on the legacy <code>nvvidconv</code>
         element, where the BGR-CAPS gap forces a CPU adapter on each pipeline boundary.
-        A non-dustynv L4T image (or a JetPack image with the multimedia API installed)
-        ships <code>nvvideoconvert</code>, whose CAPS include <code>BGR</code> natively,
-        removing the CPU <code>videoconvert ↔ BGRx</code> adapter on each pipeline boundary.
+        A JetPack image with the multimedia API installed ships <code>nvvideoconvert</code>,
+        whose CAPS include <code>BGR</code> natively, removing the CPU
+        <code>videoconvert ↔ BGRx</code> adapter on each pipeline boundary.
         The Jetson-side equivalent of the GStreamer 1.22+ Intel capture below.
       </li>
       <li>
