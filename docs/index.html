@@ -1087,6 +1087,56 @@ python3 bench/emit_simple_summary.py --summary bench/results/summary.json <span 
 </section>
 
 
+<!-- ═══════════════════════════════════════════════════════════════
+     ROADMAP
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="roadmap" aria-labelledby="roadmap-title">
+  <div class="container">
+    <span class="section-eyebrow">07 — Roadmap</span>
+    <h2 class="section-title" id="roadmap-title">What's planned before ROSCon</h2>
+
+    <p class="lede">
+      Five items, ranked by deadline-safety. None are blockers for the proposal
+      submission; all are visible in the repo today as scaffolding or hedges.
+    </p>
+
+    <ul class="bullets">
+      <li>
+        <strong>Orin capture against an image that ships <code>nvvideoconvert</code>.</strong>
+        The Orin numbers above are taken with Prism on the legacy <code>nvvidconv</code>
+        element, where the BGR-CAPS gap forces a CPU adapter on each pipeline boundary.
+        A non-dustynv L4T image (or a JetPack image with the multimedia API installed)
+        ships <code>nvvideoconvert</code>, whose CAPS include <code>BGR</code> natively,
+        removing the CPU <code>videoconvert ↔ BGRx</code> adapter on each pipeline boundary.
+        The Jetson-side equivalent of the GStreamer 1.22+ Intel capture below.
+      </li>
+      <li>
+        <strong>GStreamer 1.22+ Intel VA-API capture.</strong>
+        A clean A/B run on Ubuntu 24.04 (or a confirmed 1.22 backport on 22.04) where
+        <code>vapostproc</code> validates and the GPU resize kernel does the work,
+        rather than direct-mode <code>cv::resize</code>.
+      </li>
+      <li>
+        <strong>AMD Ryzen 6800H A/B capture.</strong>
+        Same harness, different host class, no VA-API.
+      </li>
+      <li>
+        <strong>Rockchip RK3588 / Qualcomm QCS 6490 backend exploration.</strong>
+        RubikPi 3 hardware on hand. RK3588 sits in the segment list today with the
+        <code>cv::resize</code> fallback as its honest baseline; the exploration
+        target is a Mali-G610 / RGA path that validates against the local
+        GStreamer registry the same way VA-API does.
+      </li>
+      <li>
+        <strong>Extended CI integration tests; Debian package on the ROS Buildfarm if feasible.</strong>
+        Current CI runs the gtest suite; integration tests and a Buildfarm submission
+        are the next two items.
+      </li>
+    </ul>
+  </div>
+</section>
+
+
 </main>
 
 <!-- ═══════════════════════════════════════════════════════════════
