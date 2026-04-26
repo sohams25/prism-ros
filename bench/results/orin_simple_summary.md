@@ -1,51 +1,51 @@
-**Host:** Jetson Orin Nano Super, JetPack 6.2 host running dustynv/ros:humble-desktop-l4t-r36.2.0 container, GPU path via nvvidconv (legacy element with BGR adapter)
+**Host:** Jetson Orin Nano Super, dustynv L4T container, GPU path via nvvidconv (legacy element with BGR adapter); crop routes through videocrop (CPU) — legacy nvvidconv BGR-CAPS gap
 **GStreamer:** GStreamer 1.20.3
 
 ## resize
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 32.80 | — | — |
-| mean latency (ms)   | — | 35.17 | — | — |
-| p95 latency (ms)    | — | 44.88 | | |
-| p99 latency (ms)    | — | 56.16 | | |
-| mean CPU (%)        | 116.1 | 146.3 | | |
-| mean RSS (MB)       | 356 | 671 | | |
+| median latency (ms) | — | 21.77 | — | — |
+| mean latency (ms)   | — | 22.64 | — | — |
+| p95 latency (ms)    | — | 28.14 | | |
+| p99 latency (ms)    | — | 38.07 | | |
+| mean CPU (%)        | 117.0 | 149.4 | | |
+| mean RSS (MB)       | 361 | 668 | | |
 | realised fps        | — | 9.97 | | |
 
 ## crop
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 45.93 | 14306.33 | +14260.40 | +31046.8 % |
-| mean latency (ms)   | 399.91 | 14256.81 | +13856.90 | +3465.0 % |
-| p95 latency (ms)    | 1217.81 | 19409.17 | | |
-| p99 latency (ms)    | 1924.88 | 20575.15 | | |
-| mean CPU (%)        | 153.7 | 114.4 | | |
-| mean RSS (MB)       | 470 | 2049 | | |
-| realised fps        | 7.21 | 1.63 | | |
+| median latency (ms) | 868.65 | 716.56 | -152.09 | -17.5 % |
+| mean latency (ms)   | 834.38 | 647.43 | -186.95 | -22.4 % |
+| p95 latency (ms)    | 999.92 | 975.82 | | |
+| p99 latency (ms)    | 1068.05 | 1057.99 | | |
+| mean CPU (%)        | 163.0 | 157.4 | | |
+| mean RSS (MB)       | 520 | 531 | | |
+| realised fps        | 6.88 | 7.77 | | |
 
 ## colorconvert
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 12871.20 | 12102.25 | -768.95 | -6.0 % |
-| mean latency (ms)   | 12466.50 | 12040.61 | -425.89 | -3.4 % |
-| p95 latency (ms)    | 15719.46 | 19372.44 | | |
-| p99 latency (ms)    | 15841.43 | 22609.29 | | |
-| mean CPU (%)        | 247.0 | 198.7 | | |
-| mean RSS (MB)       | 1339 | 3172 | | |
-| realised fps        | 0.21 | 2.05 | | |
+| median latency (ms) | 14295.86 | 1194.61 | -13101.26 | -91.6 % |
+| mean latency (ms)   | 14634.97 | 1200.36 | -13434.61 | -91.8 % |
+| p95 latency (ms)    | 18757.00 | 1398.53 | | |
+| p99 latency (ms)    | 18940.77 | 1469.23 | | |
+| mean CPU (%)        | 249.9 | 204.1 | | |
+| mean RSS (MB)       | 1393 | 802 | | |
+| realised fps        | 0.21 | 2.70 | | |
 
 ## chain
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 35.51 | — | — |
-| mean latency (ms)   | — | 37.26 | — | — |
-| p95 latency (ms)    | — | 44.92 | | |
-| p99 latency (ms)    | — | 53.00 | | |
-| mean CPU (%)        | 134.4 | 150.7 | | |
-| mean RSS (MB)       | 397 | 682 | | |
-| realised fps        | — | 10.00 | | |
+| median latency (ms) | — | 17.11 | — | — |
+| mean latency (ms)   | — | 18.04 | — | — |
+| p95 latency (ms)    | — | 21.30 | | |
+| p99 latency (ms)    | — | 24.95 | | |
+| mean CPU (%)        | 131.9 | 137.1 | | |
+| mean RSS (MB)       | 389 | 647 | | |
+| realised fps        | — | 9.98 | | |
 

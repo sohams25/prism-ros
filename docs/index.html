@@ -888,6 +888,23 @@ source install/setup.bash</code></pre>
         NVMM and the CPU direct path are unaffected.
       </p>
     </div>
+
+    <div class="finding" role="note">
+      <h3>Jetson legacy <code>nvvidconv</code> BGR-CAPS gap</h3>
+      <p>
+        On the dustynv L4T container (which ships the legacy <code>nvvidconv</code>
+        but not <code>nvvideoconvert</code>), <code>nvvidconv</code>'s sink/src caps do
+        not list <code>BGR</code>. Any GPU stage on this image carries a CPU
+        <code>videoconvert ↔ BGRx</code> adapter on the ingress boundary at full source
+        resolution. Per-action routing handles the cost-benefit:
+        <code>resize</code> and <code>chain</code> keep the GPU path (small egress
+        amortises the BGRx tax); <code>crop</code> routes to CPU <code>videocrop</code>
+        directly because there is no shrinking step to amortise over;
+        <code>colorconvert</code> keeps the GPU path and remains backpressured at
+        4K-to-4K, the legitimately-broken op on this image. An L4T image with
+        <code>nvvideoconvert</code> (BGR-native CAPS) closes that case — see Roadmap.
+      </p>
+    </div>
   </div>
 </section>
 
@@ -1103,28 +1120,34 @@ source install/setup.bash</code></pre>
       </table>
     </div>
 
-    <h3 class="sub-title">Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, GPU path via <code>nvvidconv</code> (legacy element with BGR adapter)</h3>
+    <h3 class="sub-title">Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, per-action backend on legacy <code>nvvidconv</code></h3>
     <p>
       <code>nvvideoconvert</code> is not packaged in the
       <code>dustynv/ros:humble-desktop-l4t-r36.2.0</code> image, but the legacy
       <code>nvvidconv</code> element is. Prism's two-step probe (modern element preferred,
-      legacy element accepted) selects <code>nvvidconv</code> on this host and emits a
-      Jetson GPU pipeline that uses it.
+      legacy element accepted) selects <code>nvvidconv</code> on this host.
+      <code>nvvidconv</code>'s sink/src caps do not list <code>BGR</code>, so any GPU
+      stage on this image carries a CPU <code>videoconvert ↔ BGRx</code> adapter on the
+      ingress boundary at full source resolution. Whether the adapter is worth paying is
+      a per-action call:
     </p>
+    <ul>
+      <li><strong><code>resize</code> and <code>chain</code></strong> stay on the GPU
+        path (640×480 egress; the BGRx tax is small or amortised).</li>
+      <li><strong><code>crop</code></strong> routes to CPU <code>videocrop</code>
+        directly: cropping is a sub-rectangle memcpy in BGR, the GPU offers nothing the
+        CPU cannot do faster on a non-shrinking 4K-input action because the BGR adapter
+        dominates. Same principled finding as the VAAPI 1.20 fallback above.</li>
+      <li><strong><code>colorconvert</code></strong> keeps the GPU path on this image
+        (BGR → BGRx → GPU RGBA → <code>cv::cvtColor</code> at egress). It remains
+        backpressured at 4K-to-4K egress because the BGR adapter has no shrinking step
+        to amortise over; this is the legitimately-broken op on this image. Proposal
+        Section 9 <code>nvvideoconvert</code> capture is the path forward.</li>
+    </ul>
     <p>
-      <code>nvvidconv</code>'s sink/src caps do not list <code>BGR</code>. Each pipeline
-      therefore wraps the GPU stage with a CPU <code>videoconvert ↔ BGRx</code> adapter on
-      each boundary. On 4K BGR8 input at 10 Hz, that adapter tax dominates: at 640×480
-      egress (<code>resize</code>, <code>chain</code>) the GPU path holds 10 Hz throughput
-      but adds latency relative to direct-mode <code>cv::resize</code> on this same
-      hardware; at near-4K egress (<code>crop</code> 2560×1440, <code>colorconvert</code>
-      4K → 4K) the CPU <code>videoconvert</code> on every frame becomes the bottleneck
-      and the pipeline goes into backpressure. This is a property of the legacy element's
-      CAPS, not of Prism — on a non-dustynv image with <code>nvvideoconvert</code>
-      (BGR-native CAPS), this regime would not apply. <code>image_proc::ResizeNode</code>
-      does not publish frames inside this container (an <code>image_proc</code> packaging
-      issue specific to the dustynv image, not a Prism finding); A/B delta is omitted for
-      <code>resize</code> and <code>chain</code>.
+      <code>image_proc::ResizeNode</code> does not publish frames inside this container
+      (an <code>image_proc</code> packaging issue specific to the dustynv image, not a
+      Prism finding); A/B delta is omitted for <code>resize</code> and <code>chain</code>.
     </p>
 
     <h4>resize (3840×2160 → 640×480 @ 10 Hz, GPU path via <code>nvvidconv</code>; stock unavailable in this container)</h4>
@@ -1132,71 +1155,84 @@ source install/setup.bash</code></pre>
       <table class="tbl">
         <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr><td>median latency (ms)</td><td>—</td><td>32.80</td><td>—</td><td>—</td></tr>
-          <tr><td>mean latency (ms)</td><td>—</td><td>35.17</td><td>—</td><td>—</td></tr>
-          <tr><td>p95 latency (ms)</td><td>—</td><td>44.88</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>—</td><td>56.16</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>116.1</td><td>146.3</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>356</td><td>671</td><td></td><td></td></tr>
+          <tr><td>median latency (ms)</td><td>—</td><td>21.77</td><td>—</td><td>—</td></tr>
+          <tr><td>mean latency (ms)</td><td>—</td><td>22.64</td><td>—</td><td>—</td></tr>
+          <tr><td>p95 latency (ms)</td><td>—</td><td>28.14</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>—</td><td>38.07</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>117.0</td><td>149.4</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>361</td><td>668</td><td></td><td></td></tr>
           <tr><td>realised fps</td><td>—</td><td>9.97</td><td></td><td></td></tr>
         </tbody>
       </table>
     </div>
 
-    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz, GPU path via <code>nvvidconv</code>, A/B)</h4>
+    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz, CPU <code>videocrop</code> on legacy nvvidconv image, A/B)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr><td>median latency (ms)</td><td>45.93</td><td>14306.33</td><td>+14260.40</td><td>+31046.8 %</td></tr>
-          <tr><td>mean latency (ms)</td><td>399.91</td><td>14256.81</td><td>+13856.90</td><td>+3465.0 %</td></tr>
-          <tr><td>p95 latency (ms)</td><td>1217.81</td><td>19409.17</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>1924.88</td><td>20575.15</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>153.7</td><td>114.4</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>470</td><td>2049</td><td></td><td></td></tr>
-          <tr><td>realised fps</td><td>7.21</td><td>1.63</td><td></td><td></td></tr>
+          <tr><td>median latency (ms)</td><td>868.65</td><td>716.56</td><td>-152.09</td><td>-17.5 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>834.38</td><td>647.43</td><td>-186.95</td><td>-22.4 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>999.92</td><td>975.82</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>1068.05</td><td>1057.99</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>163.0</td><td>157.4</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>520</td><td>531</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>6.88</td><td>7.77</td><td></td><td></td></tr>
         </tbody>
       </table>
     </div>
+    <p>
+      Both stock and Prism saturate at ≈7 fps under this container's CPU contention (the
+      bench's twin-component-container layout pins the Orin Nano's 6 cores hard); Prism's
+      median is below stock by ~17 %, so the intra-process + DDS-roundtrip-elimination
+      architecture still pays off on the legacy GPU image even when the GPU element
+      itself does not contribute.
+    </p>
 
     <h4>colorconvert (BGR8 → RGB8 @ 10 Hz, GPU path via <code>nvvidconv</code>, A/B)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr><td>median latency (ms)</td><td>12871.20</td><td>12102.25</td><td>-768.95</td><td>-6.0 %</td></tr>
-          <tr><td>mean latency (ms)</td><td>12466.50</td><td>12040.61</td><td>-425.89</td><td>-3.4 %</td></tr>
-          <tr><td>p95 latency (ms)</td><td>15719.46</td><td>19372.44</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>15841.43</td><td>22609.29</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>247.0</td><td>198.7</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>1339</td><td>3172</td><td></td><td></td></tr>
-          <tr><td>realised fps</td><td>0.21</td><td>2.05</td><td></td><td></td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h4>chain (crop → resize → colorconvert @ 10 Hz, GPU path via <code>nvvidconv</code>; stock unavailable in this container)</h4>
-    <div class="tbl-wrap">
-      <table class="tbl">
-        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
-        <tbody>
-          <tr><td>median latency (ms)</td><td>—</td><td>35.51</td><td>—</td><td>—</td></tr>
-          <tr><td>mean latency (ms)</td><td>—</td><td>37.26</td><td>—</td><td>—</td></tr>
-          <tr><td>p95 latency (ms)</td><td>—</td><td>44.92</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>—</td><td>53.00</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>134.4</td><td>150.7</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>397</td><td>682</td><td></td><td></td></tr>
-          <tr><td>realised fps</td><td>—</td><td>10.00</td><td></td><td></td></tr>
+          <tr><td>median latency (ms)</td><td>14295.86</td><td>1194.61</td><td>-13101.26</td><td>-91.6 %</td></tr>
+          <tr><td>mean latency (ms)</td><td>14634.97</td><td>1200.36</td><td>-13434.61</td><td>-91.8 %</td></tr>
+          <tr><td>p95 latency (ms)</td><td>18757.00</td><td>1398.53</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>18940.77</td><td>1469.23</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>249.9</td><td>204.1</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>1393</td><td>802</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>0.21</td><td>2.70</td><td></td><td></td></tr>
         </tbody>
       </table>
     </div>
     <p>
-      The <code>chain</code> row uses <code>crop → resize → colorconvert</code>. The
-      resize stage cuts the frame to 640×480 before <code>colorconvert</code> runs, so
-      the BGRx adapters in <code>colorconvert</code> and the connecting boundary are on
-      the small frame, not 4K. That is the structural reason <code>chain</code> keeps 10
-      Hz throughput while the standalone <code>crop</code> and <code>colorconvert</code>
-      rows do not.
+      Both sides backpressured: the stock Python NumPy subscriber cannot drain 4K
+      BGR8→RGB8 at 10 Hz, and Prism's GPU path through legacy <code>nvvidconv</code>
+      pays the CPU BGR↔BGRx adapter at full 4K with no shrinking step to amortise over.
+      Prism is 91 % faster than stock but neither holds 10 Hz. This is the
+      legitimately-broken op on this image.
+    </p>
+
+    <h4>chain (crop → resize → colorconvert @ 10 Hz, mixed CPU <code>videocrop</code> + GPU resize/colorconvert; stock unavailable in this container)</h4>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <tbody>
+          <tr><td>median latency (ms)</td><td>—</td><td>17.11</td><td>—</td><td>—</td></tr>
+          <tr><td>mean latency (ms)</td><td>—</td><td>18.04</td><td>—</td><td>—</td></tr>
+          <tr><td>p95 latency (ms)</td><td>—</td><td>21.30</td><td></td><td></td></tr>
+          <tr><td>p99 latency (ms)</td><td>—</td><td>24.95</td><td></td><td></td></tr>
+          <tr><td>mean CPU (%)</td><td>131.9</td><td>137.1</td><td></td><td></td></tr>
+          <tr><td>mean RSS (MB)</td><td>389</td><td>647</td><td></td><td></td></tr>
+          <tr><td>realised fps</td><td>—</td><td>9.98</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>chain</code> benefits doubly from the per-action routing: the lead
+      <code>crop</code> step shrinks 4K → 2560×1440 in CPU <code>videocrop</code> before
+      any BGR↔BGRx adapter, and the trailing <code>resize</code> step downsamples to
+      640×480 before the closing <code>colorconvert</code>'s GPU stage runs. Net: ~10 Hz
+      at 17 ms median.
     </p>
 
     <h3 class="sub-title">Reproducing</h3>

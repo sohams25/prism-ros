@@ -261,8 +261,15 @@ std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
            << ",height=" << c.crop_height;
         return ss.str();
       }
-      // Legacy nvvidconv crops via left/right/top/bottom — same math as
-      // videocrop. BGR boundary adapters identical to resize_jetson legacy.
+      // Legacy nvvidconv requires BGR<->BGRx adapters at full source
+      // resolution because BGR is not in its CAPS. For crop alone (no
+      // resize, no colorspace change downstream), the adapter tax dwarfs
+      // any benefit from running the crop on the VIC engine. videocrop
+      // operates directly on BGR system memory with stride-only work
+      // (effectively a sub-rectangle memcpy), so we route legacy crop
+      // through it and skip the GPU stage entirely. Same principled
+      // finding as the VAAPI 1.20 fallback: when the GPU element is
+      // structurally not paying off, the CPU path is the right answer.
       {
         const int right_l  = c.source_width  - (c.crop_x + c.crop_width);
         const int bottom_l = c.source_height - (c.crop_y + c.crop_height);
@@ -270,14 +277,11 @@ std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
           throw std::invalid_argument(
             "crop rect extends beyond source_width/source_height");
         }
-        // Egress stays in BGRx; appsink callback maps BGRx -> bgr8.
-        ss << "videoconvert n-threads=4 ! video/x-raw,format=BGRx"
-           << " ! nvvidconv compute-hw=1"
+        ss << "videocrop"
            << " left="   << c.crop_x
            << " right="  << right_l
            << " top="    << c.crop_y
-           << " bottom=" << bottom_l
-           << " ! video/x-raw,format=BGRx";
+           << " bottom=" << bottom_l;
         return ss.str();
       }
 
