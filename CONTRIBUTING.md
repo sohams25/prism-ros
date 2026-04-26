@@ -39,7 +39,7 @@ the break. This drives the SemVer bump.
     colcon build --packages-select prism_image_proc
     source install/setup.bash
     colcon test --packages-select prism_image_proc \
-      --ctest-args -R test_direct_resize
+      --ctest-args -R test_pipeline_factory
     colcon test-result --verbose
 
 ## Scope of contributions

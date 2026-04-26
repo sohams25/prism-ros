@@ -36,7 +36,7 @@ direct-mode fallback. Drop-in replacement for
   test / demo helpers.
 - `launch/A_B_comparison.launch.py`: two-container side-by-side
   stress test against `image_proc::ResizeNode`.
-- 11-case gtest suite (`test_direct_resize`) covering the action
+- 11-case gtest suite (`test_pipeline_factory`) covering the action
   chain parser, each transform, chain composition, and pipeline
   build strings.
 - GitHub Actions CI on the `ros:humble` container: build + gtest

@@ -188,16 +188,16 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_direct_resize test/test_direct_resize.cpp)
-  target_link_libraries(test_direct_resize prism_core)
-  target_include_directories(test_direct_resize PRIVATE
+  ament_add_gtest(test_pipeline_factory test/test_pipeline_factory.cpp)
+  target_link_libraries(test_pipeline_factory prism_core)
+  target_include_directories(test_pipeline_factory PRIVATE
     ${GST_INCLUDE_DIRS}
   )
-  target_link_directories(test_direct_resize PRIVATE
+  target_link_directories(test_pipeline_factory PRIVATE
     ${GST_LIBRARY_DIRS}
   )
-  target_link_libraries(test_direct_resize ${GST_LIBRARIES})
-  ament_target_dependencies(test_direct_resize sensor_msgs)
+  target_link_libraries(test_pipeline_factory ${GST_LIBRARIES})
+  ament_target_dependencies(test_pipeline_factory sensor_msgs)
 endif()
 
 ament_package()

@@ -56,7 +56,7 @@ jobs:
           # style issues in scripts/ and is tracked separately.
           colcon test \
             --packages-select prism_image_proc \
-            --ctest-args -R test_direct_resize \
+            --ctest-args -R test_pipeline_factory \
             --event-handlers console_direct+
           colcon test-result --verbose
 
