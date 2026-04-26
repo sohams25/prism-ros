@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-04-23
+## [0.1.0] - 2026-04-27
 
 Initial public release of `prism_image_proc` — a hardware-agnostic
 ROS 2 image-processing accelerator with runtime-dispatched GStreamer
@@ -51,7 +51,11 @@ direct-mode fallback. Drop-in replacement for
   the Intel iGPU path is detected but falls back to direct mode on
   stock Humble. GStreamer 1.22+ (Ubuntu 24.04 / Jazzy) required for
   the GPU resize kernel on Intel.
-- Jetson Orin A/B validation captures are pending.
+- Jetson Orin A/B captures are in [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md);
+  the `colorconvert` row's Δ% is intentionally omitted (em-dash) — the Python NumPy
+  stock baseline is a throughput ceiling, not a kernel comparison — and the Round-3
+  contention finding (bench-harness CPU saturation, not BGR-adapter dominance) is
+  documented alongside the per-percentile data.
 - `image_proc::ResizeNode` "drop-in" replacement covers the resize
   pipeline — rectification is out of scope for this release.
 
