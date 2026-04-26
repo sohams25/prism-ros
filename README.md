@@ -6,9 +6,7 @@
 [![GStreamer](https://img.shields.io/badge/GStreamer-1.x-orange.svg)](https://gstreamer.freedesktop.org/)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 
-Hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a **drop-in replacement for `image_proc::ResizeNode`'s resize pipeline** — same parameters, same Image output, with a scaled `CameraInfo` on the matching topic — that auto-detects host accelerators at runtime and chooses the fastest available backend: a GStreamer pipeline with **zero-copy intra-process ingest** on supported GPUs, or a direct `cv::resize` callback when no usable GPU path is present. Egress to the outgoing `sensor_msgs/Image` is a single copy; the claim is *zero-copy ingest, no DDS round-trip*, not end-to-end zero-copy. Input honours `image_transport` (default `raw`; compressed transports decode before GStreamer ingest).
-
-Same resize parameters. Same output topic. Scaled `CameraInfo` on the paired topic. One-line launch-file swap.
+Hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a **drop-in replacement for `image_proc::ResizeNode`'s resize pipeline** (one-line launch-file swap; same parameters, same `sensor_msgs/Image` output, scaled `CameraInfo` on the paired topic) that auto-detects host accelerators at runtime and selects the first validated backend (priority-ordered: Jetson NVMM → Intel VA-API → CPU): a GStreamer pipeline with **zero-copy intra-process ingest** on supported GPUs, or a direct `cv::resize` callback when no usable GPU path is present. Egress is a single copy; the claim is *zero-copy ingest, no DDS round-trip*, not end-to-end zero-copy. Input honours `image_transport` (default `raw`; compressed transports decode before GStreamer ingest).
 
 [**Documentation & benchmarks →**](https://sohams25.github.io/prism-ros/)
 
@@ -213,212 +211,37 @@ On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present b
 
 ### Jetson legacy `nvvidconv` BGR-CAPS gap
 
-On the dustynv L4T container (which ships the legacy `nvvidconv` but not `nvvideoconvert`), `nvvidconv`'s sink/src caps do not list `BGR`. Any GPU stage on this image carries a CPU `videoconvert ↔ BGRx` adapter on the ingress boundary at full source resolution. Routing is a hand-coded per-action table derived from operator measurement on this hardware / element combination, not an autonomous runtime optimiser: `resize` and `chain` keep the GPU path (small egress amortises the BGRx tax); `crop` routes to CPU `videocrop` directly because there is no shrinking step to amortise over; `colorconvert` keeps the GPU path because a Round-3 follow-up run with the GPU stage removed produced statistically identical numbers — the colorconvert ceiling on this image is dual-container CPU contention from the bench harness, not the BGR adapter. See the Benchmarks Orin block for the full Round-3 finding.
+On the dustynv L4T container (which ships the legacy `nvvidconv` but not `nvvideoconvert`), `nvvidconv`'s sink/src caps do not list `BGR`. Any GPU stage on this image carries a CPU `videoconvert ↔ BGRx` adapter on the ingress boundary at full source resolution. Routing is a hand-coded per-action table derived from operator measurement on this hardware / element combination, not an autonomous runtime optimiser: `resize` and `chain` keep the GPU path (small egress amortises the BGRx tax); `crop` routes to CPU `videocrop` directly because there is no shrinking step to amortise over; `colorconvert` keeps the GPU path but is bench-bound by dual-container CPU contention, not the BGR adapter. Full Round-3 finding and contention math in [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
 
 </details>
 
 ## Benchmarks
 
-A/B captures against stock ROS 2 Humble `image_proc` on two hosts. 4K BGR8
-input from `prism::MediaStreamerNode` (3840×2160 H.264 → BGR8) at 10 Hz,
-120 s sustained capture per operation (preceded by a 10 s warmup), with
-the first 10 s and last 5 s of latency samples dropped at analysis time —
-leaving a ≈105 s analysis window. Two `component_container` processes per
-run; latency is per-frame from publish stamp to subscriber receive.
-Methodology and per-run CSVs live in
-[`bench/`](bench/); commit-pinned per-host summaries are
-[`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md)
-and [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
+A/B captures against stock ROS 2 Humble `image_proc` on two hosts: 4K BGR8 input at 10 Hz, 120 s per operation, two `component_container` processes. Full methodology, per-percentile / CPU / RSS / fps data, and the per-host findings live in [`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md) and [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
 
 ### Intel desktop, GStreamer 1.20, direct-mode fallback
 
-`vapostproc` fails live validation on stock Humble (chroma-subsampling
-regression on GStreamer 1.20); the GPU resize kernel does not run. The
-delta below is intra-process delivery plus elimination of DDS round-trips,
-not GPU offload.
+| Action          | Prism median (ms) | Stock median (ms) | Δ %      |
+| --------------- | ----------------: | ----------------: | -------: |
+| `resize`        |              4.55 |             10.77 |  −57.8 % |
+| `crop`          |              4.27 |             22.65 |  −81.1 % |
+| `colorconvert`  |              2.99 |           2323.65 |  −99.9 % |
+| `chain` (3 ops) |             12.86 |             76.28 |  −83.1 % |
 
-#### resize (3840×2160 → 640×480 @ 10 Hz)
+Full per-percentile data and methodology in [`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md).
 
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 10.77 | 4.55 | -6.22 | -57.8 % |
-| mean latency (ms)   | 13.42 | 7.74 | -5.68 | -42.4 % |
-| p95 latency (ms)    | 20.39 | 13.93 | | |
-| p99 latency (ms)    | 26.66 | 23.69 | | |
-| mean CPU (%)        | 60.8  | 56.2  | | |
-| mean RSS (MB)       | 806   | 748   | | |
-| realised fps        | 10.01 | 10.00 | | |
+### Jetson Orin Nano Super, JetPack 6.2, dustynv L4T container
 
-#### crop (3840×2160 → 2560×1440 @ 10 Hz)
+Per-action backend on legacy `nvvidconv` (`resize`/`chain` GPU, `crop` CPU `videocrop`, `colorconvert` GPU). The BGR-CAPS gap that drives this routing, the colorconvert backpressure finding, and the empirical intra-process verification are documented in the linked summary.
 
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 22.65 | 4.27  | -18.38 | -81.1 % |
-| mean latency (ms)   | 24.76 | 8.68  | -16.09 | -65.0 % |
-| p95 latency (ms)    | 38.27 | 20.56 | | |
-| p99 latency (ms)    | 49.21 | 34.55 | | |
-| mean CPU (%)        | 63.9  | 57.7  | | |
-| mean RSS (MB)       | 830   | 747   | | |
-| realised fps        | 10.01 | 10.01 | | |
+| Action          | Prism median (ms) | Stock median (ms) | Δ %      |
+| --------------- | ----------------: | ----------------: | -------: |
+| `resize`        |             21.77 | —                 | —        |
+| `crop`          |            716.56 |            868.65 |  −17.5 % |
+| `colorconvert`  |           1194.61 |          14295.86 |  −91.6 % |
+| `chain` (3 ops) |             17.11 | —                 | —        |
 
-#### colorconvert (BGR8 → RGB8 @ 10 Hz)
-
-`image_proc` ships no dedicated colorconvert C++ node, so the stock-side
-reference is a Python `rclpy` subscriber. At 4K it cannot drain the topic;
-latency rises unboundedly.
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 2323.65 | 2.99  | -2320.66 | -99.9 % |
-| mean latency (ms)   | 2317.22 | 7.33  | -2309.89 | -99.7 % |
-| p95 latency (ms)    | 2397.21 | 13.34 | | |
-| p99 latency (ms)    | 2430.18 | 23.37 | | |
-| mean CPU (%)        | 157.5   | 49.9  | | |
-| mean RSS (MB)       | 1221    | 747   | | |
-| realised fps        | 0.76    | 10.01 | | |
-
-#### chain (`crop → resize → colorconvert` @ 10 Hz)
-
-Stock side runs three separate `image_proc`/`rclpy` nodes DDS-piped
-together; Prism runs the full chain inside one `prism::ImageProcNode`.
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 76.28  | 12.86 | -63.43 | -83.1 % |
-| mean latency (ms)   | 76.43  | 8.86  | -67.57 | -88.4 % |
-| p95 latency (ms)    | 97.74  | 14.09 | | |
-| p99 latency (ms)    | 107.56 | 24.38 | | |
-| mean CPU (%)        | 103.2  | 49.2  | | |
-| mean RSS (MB)       | 885    | 747   | | |
-| realised fps        | 10.01  | 10.01 | | |
-
-### Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, per-action backend on legacy `nvvidconv`
-
-`nvvideoconvert` is not packaged in the `dustynv/ros:humble-desktop-l4t-r36.2.0`
-image, but the legacy `nvvidconv` element is. Prism's `validate_platform()`
-two-step probe (modern element preferred, legacy element accepted) selects
-`nvvidconv` on this host. `nvvidconv`'s sink/src caps do not list `BGR`,
-so any GPU stage on this image carries a CPU `videoconvert ↔ BGRx`
-adapter on the ingress boundary at full source resolution. Whether that
-adapter is worth paying depends on the per-action cost-benefit:
-
-- **`resize` and `chain`** stay on the GPU path. Both end at 640×480
-  egress, so the trailing BGRx is small; `chain`'s lead `crop` step on
-  legacy uses CPU `videocrop` directly (see below) which means the BGRx
-  adapter only sees a 2560×1440 frame, not 4K. Both hold 10 Hz.
-- **`crop`** is routed to CPU `videocrop` directly. Cropping is a pure
-  sub-rectangle memcpy in BGR; the GPU element offers nothing the CPU
-  cannot do faster on a non-shrinking 4K-input action because the BGR
-  adapter tax dominates. Same principled finding as the VAAPI 1.20
-  fallback documented above for the Intel host.
-- **`colorconvert`** keeps the GPU path on this image (BGR → BGRx → GPU
-  RGBA → cv::cvtColor at egress). It remains backpressured at 4K-to-4K
-  egress because the BGR adapter has no shrinking step to amortize over.
-  Direct-mode `cv::cvtColor` would also struggle here under the dual-
-  container bench (the stock-side Python NumPy baseline pins ~2.5 cores
-  on its own); colorconvert at 4K-to-4K on this hardware is the
-  legitimately-broken case, and the proposal's Section 9
-  `nvvideoconvert` capture is the path forward.
-
-For reference, the prior April-25 direct-mode capture on this same Orin
-(when neither GPU element was registered in the container — CSVs preserved
-at `bench/results/orin_20260425T132225Z/`) showed `cv::resize` medians of
-7.61 ms (resize), 9.47 ms (crop), 9.27 ms (colorconvert), 9.00 ms (chain),
-all at ≈10 fps. Direct-mode wins on Orin; on Intel the wins come from
-intra-process composition + DDS-elimination, and the same architecture
-applies on Orin even when the GPU element does not contribute a
-latency reduction.
-
-#### resize (3840×2160 → 640×480 @ 10 Hz, GPU path via `nvvidconv`; stock unavailable in this container)
-
-`image_proc::ResizeNode` does not publish frames inside this container
-(an `image_proc` packaging issue specific to the dustynv image, not a Prism
-finding); A/B delta omitted.
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 21.77 | — | — |
-| mean latency (ms)   | — | 22.64 | — | — |
-| p95 latency (ms)    | — | 28.14 | | |
-| p99 latency (ms)    | — | 38.07 | | |
-| mean CPU (%)        | 117.0 | 149.4 | | |
-| mean RSS (MB)       | 361   | 668   | | |
-| realised fps        | — | 9.97 | | |
-
-#### crop (3840×2160 → 2560×1440 @ 10 Hz, CPU `videocrop` on legacy nvvidconv image, A/B)
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 868.65  | 716.56 | -152.09 | -17.5 % |
-| mean latency (ms)   | 834.38  | 647.43 | -186.95 | -22.4 % |
-| p95 latency (ms)    | 999.92  | 975.82 | | |
-| p99 latency (ms)    | 1068.05 | 1057.99 | | |
-| mean CPU (%)        | 163.0   | 157.4 | | |
-| mean RSS (MB)       | 520     | 531   | | |
-| realised fps        | 6.88    | 7.77  | | |
-
-Both stock and Prism saturate at ≈7 fps under this container's CPU
-contention (the bench's twin-component-container layout pins the Orin
-Nano's 6 cores hard); Prism's median is below stock by ~17 %, so the
-intra-process + DDS-roundtrip-elimination architecture still pays off
-on the legacy GPU image even when the GPU element itself does not
-contribute.
-
-#### colorconvert (BGR8 → RGB8 @ 10 Hz, GPU path via `nvvidconv`, A/B)
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 14295.86 | 1194.61 | -13101.26 | -91.6 % |
-| mean latency (ms)   | 14634.97 | 1200.36 | -13434.61 | -91.8 % |
-| p95 latency (ms)    | 18757.00 | 1398.53 | | |
-| p99 latency (ms)    | 18940.77 | 1469.23 | | |
-| mean CPU (%)        | 249.9    | 204.1   | | |
-| mean RSS (MB)       | 1393     | 802     | | |
-| realised fps        | 0.21     | 2.70    | | |
-
-Both sides backpressured. Initial framing attributed Prism's 1194 ms
-median to the CPU BGR↔BGRx adapter on legacy nvvidconv. A subsequent
-A/B run (logged in `bench/results/orin_idea45_20260426T084812Z/`)
-routed colorconvert through pure CPU `videoconvert n-threads=4` —
-removing the GPU stage entirely — and produced statistically identical
-numbers (1188 ms / 2.38 fps). The ceiling is therefore **not** the BGR
-adapter on this op: it is dual-container CPU contention from the bench
-harness, which pins ~5 of the 6 Orin cores between the stock-side
-Python NumPy baseline (~2.5 cores at 250 % CPU) and Prism (~2 cores).
-The single-process direct-mode capture from April 25 measured 9.27 ms
-on this same hardware (`bench/results/orin_20260425T132225Z/`); the
-production ceiling is ~10–20 ms, not the bench's 1194 ms. Prism is
-91.6 % faster than stock under the same contention. The proposal's
-Section 9 `nvvideoconvert` capture (CUDA-resident colorspace, no CPU
-contention with the stock baseline) closes this case for production
-deployments.
-
-#### chain (crop → resize → colorconvert @ 10 Hz, mixed CPU `videocrop` + GPU resize/colorconvert; stock unavailable in this container)
-
-`image_proc::ResizeNode` is the second step in the stock-side launch and
-does not publish; A/B delta omitted, Prism throughput reported standalone.
-
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 17.11 | — | — |
-| mean latency (ms)   | — | 18.04 | — | — |
-| p95 latency (ms)    | — | 21.30 | | |
-| p99 latency (ms)    | — | 24.95 | | |
-| mean CPU (%)        | 131.9 | 137.1 | | |
-| mean RSS (MB)       | 389   | 647   | | |
-| realised fps        | — | 9.98 | | |
-
-`chain` benefits doubly from the per-action routing: the lead `crop`
-step shrinks 4K → 2560×1440 in CPU `videocrop` before any BGR↔BGRx
-adapter, and the trailing `resize` step downsamples to 640×480 before
-the closing `colorconvert`'s GPU stage runs. Net: ~10 Hz at 17 ms
-median.
-
-The `chain` row uses `crop → resize → colorconvert`. The resize stage cuts
-the frame to 640×480 before `colorconvert` runs, so the BGRx adapters in
-`colorconvert` and the connecting boundary are on the small frame, not 4K.
-That is the structural reason `chain` keeps 10 Hz throughput while the
-standalone `crop` and `colorconvert` rows do not.
+Stock-side `image_proc::ResizeNode` does not publish frames inside this container (an `image_proc` packaging issue, not a Prism finding) — so `resize` and `chain` are Prism-only. Full per-percentile data and methodology in [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
 
 ### Reproducing
 
