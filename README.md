@@ -12,7 +12,7 @@
 [![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-22a06b?style=for-the-badge&logo=ros&logoColor=white)](https://docs.ros.org/en/humble/)
 [![CI](https://img.shields.io/github/actions/workflow/status/sohams25/prism-ros/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml)
 
-A hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a drop-in replacement for `image_proc::ResizeNode`'s resize pipeline (one-line launch swap, same parameters, scaled `CameraInfo` on the paired topic). At startup it detects and live-validates host accelerators against the GStreamer registry — Jetson NVMM → Intel VA-API → CPU direct mode — with zero-copy intra-process ingest, single-copy egress, and no DDS round-trip on the supported paths. Per-action routing within a backend is a hand-coded table from operator A/B measurement, not an autonomous runtime optimiser.
+A hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a drop-in replacement for `image_proc::ResizeNode`'s resize pipeline (one-line launch swap, same parameters, scaled `CameraInfo` on the paired topic). At startup it detects and live-validates host accelerators against the GStreamer registry — Jetson NVMM → Intel VA-API → CPU direct mode — with zero-copy intra-process ingest, single-copy egress, and no DDS round-trip on the supported paths.
 
 Prism targets the segment of the ROS 2 fleet Isaac ROS does not cover: Intel iGPU, AMD, Rockchip RK3588 / Mali-G610, older Jetson, and Jetson Orin pinned to Humble.
 
@@ -200,7 +200,7 @@ flowchart TD
 | 2 | Intel VA-API | `/dev/dri/renderD*` + `vapostproc` in registry | GStreamer `vapostproc` |
 | 3 | CPU (always) | — | Direct `cv::resize` in callback |
 
-The fallback is **live-validated** against the GStreamer plugin registry — an accelerator that's present but broken (for example, the `vaapipostproc` chroma bug on GStreamer 1.20) is skipped, not attempted.
+The fallback is **live-validated** against the GStreamer plugin registry — an accelerator that's present but broken (for example, the `vaapipostproc` chroma bug on GStreamer 1.20) is skipped, not attempted. Per-action routing within a backend is a hand-coded table from operator A/B measurement, not an autonomous runtime optimiser.
 
 ## Benchmarks
 
@@ -217,11 +217,11 @@ A/B captures against stock ROS 2 Humble `image_proc` on two hosts: 4K BGR8 input
 | `colorconvert`  |              2.99 |           2323.65 |        — |
 | `chain` (3 ops) |             12.86 |             76.28 |  −83.1 % |
 
-`colorconvert` Δ% omitted — stock baseline is a Python NumPy node that cannot drain 4K BGR8 at 10 Hz (`image_proc` ships no C++ colorconvert). Full per-percentile data, methodology, and the throughput-ceiling rationale in [`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md).
+`colorconvert` Δ% omitted — stock baseline is a Python NumPy node that cannot drain 4K BGR8 at 10 Hz (`image_proc` ships no C++ colorconvert). Full per-percentile data, methodology, and the throughput-ceiling explanation in [`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md).
 
 ### Jetson Orin Nano Super, JetPack 6.2
 
-Per-action backend on legacy `nvvidconv` (`resize`/`chain` GPU, `crop` CPU `videocrop`, `colorconvert` GPU). The BGR-CAPS gap that drives this routing, the colorconvert backpressure finding, and the empirical intra-process verification are documented in the linked summary.
+Per-action backend on legacy `nvvidconv` (`resize`/`chain` GPU, `crop` CPU `videocrop`, `colorconvert` GPU). The BGR-CAPS gap that drives this routing, the Round-3 colorconvert contention finding (bench-harness CPU saturation, not BGR-adapter dominance), and the empirical intra-process verification are documented in the linked summary.
 
 | Action          | Prism median (ms) | Stock median (ms) | Δ %      |
 | --------------- | ----------------: | ----------------: | -------: |

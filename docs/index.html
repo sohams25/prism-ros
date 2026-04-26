@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Prism — ROS 2 perception acceleration</title>
-<meta name="description" content="Prism is a hardware-agnostic ROS 2 image-processing accelerator. Drop-in replacement for image_proc::ResizeNode that auto-detects VA-API, NVMM, or CPU backends." />
+<meta name="description" content="Hardware-agnostic ROS 2 image-processing accelerator. Drop-in replacement for image_proc::ResizeNode's resize pipeline; detects and validates VA-API, NVMM, or CPU backends at startup, with hand-coded per-action routing." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -451,6 +451,48 @@
   .bench p { margin: 0 auto 14px; font-size: 14.5px; max-width: 56ch; }
 
   /* ───────────────────────────────────────────────────────────────
+     Parameters: collapsible details/summary
+     ─────────────────────────────────────────────────────────────── */
+  .params-details summary {
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+    transition: color 120ms ease;
+  }
+  .params-details summary:hover { color: var(--fg); }
+  .params-details[open] summary { margin-bottom: 28px; border-bottom-color: var(--border-strong); }
+
+  /* ───────────────────────────────────────────────────────────────
+     Benchmarks: subtle accent on significant-win rows + caption
+     ─────────────────────────────────────────────────────────────── */
+  .tbl-caption {
+    font-size: 13.5px; color: var(--fg-muted);
+    margin: -8px 0 14px 0;
+    max-width: 72ch;
+  }
+  table.tbl tr.row-win td:last-child { color: var(--fg); font-weight: 600; }
+  table.tbl tr.row-win td:first-child::before {
+    content: '';
+    display: inline-block;
+    width: 3px; height: 12px;
+    background: var(--accent-2);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .bench-note {
+    font-size: 13.5px; color: var(--fg-muted);
+    margin: 8px 0 14px 0;
+    max-width: 72ch;
+  }
+
+  /* ───────────────────────────────────────────────────────────────
      Footer
      ─────────────────────────────────────────────────────────────── */
   footer {
@@ -661,15 +703,14 @@
           Prism is a <strong>hardware-agnostic ROS 2 image-processing accelerator</strong>. It's a
           drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline — same
           parameters, same output, with a scaled <code>CameraInfo</code> on the paired topic —
-          that auto-detects host accelerators at runtime and chooses the fastest available
-          backend: a GStreamer pipeline with zero-copy intra-process ingest, single-copy egress,
-          and no DDS round-trip on supported GPUs (Intel VA-API, NVIDIA Jetson NVMM), or a direct
-          <code>cv::resize</code> fallback when no usable GPU path is present. The claim is
-          zero-copy ingest plus single-copy egress, not end-to-end zero-copy.
+          that detects and live-validates host accelerators at startup against the GStreamer
+          registry: a GStreamer pipeline with zero-copy intra-process ingest, single-copy
+          egress, and no DDS round-trip on supported GPUs (Intel VA-API, NVIDIA Jetson NVMM),
+          or a direct <code>cv::resize</code> fallback when no usable GPU path is present.
         </p>
         <ul class="bullets">
           <li>Drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline</li>
-          <li>Auto-detects VA-API / NVMM / CPU at runtime</li>
+          <li>Detects and live-validates VA-API / NVMM / CPU at startup; per-action routing is operator-measured</li>
           <li>Zero-copy intra-process ingest, single-copy egress, no DDS round-trip</li>
         </ul>
       </div>
@@ -717,6 +758,7 @@ sudo apt install <span class="tok-p">\</span>
     ros-humble-image-proc <span class="tok-p">\</span>
     libgstreamer1.0-dev <span class="tok-p">\</span>
     libgstreamer-plugins-base1.0-dev <span class="tok-p">\</span>
+    gstreamer1.0-plugins-base <span class="tok-p">\</span>
     gstreamer1.0-plugins-good <span class="tok-p">\</span>
     gstreamer1.0-vaapi</code></pre>
           </div>
@@ -773,14 +815,14 @@ source install/setup.bash</code></pre>
     <span class="section-eyebrow">03 — Architecture</span>
     <h2 class="section-title" id="arch-title">Detect, validate, dispatch</h2>
     <p>
-      At startup, a <code>HardwareDetector</code> probes the host for usable acceleration paths.
-      A <code>PipelineFactory</code> queries the live GStreamer registry via
-      <code>gst_element_factory_find</code> (the same C API <code>gst-inspect</code> is built on) to
-      validate each candidate — a GStreamer element being present on the system is not the same as
-      it actually working on this kernel, driver stack, and chroma-subsampling combo. The Jetson
-      probe is two-step: prefer <code>nvvideoconvert</code>, fall back to the legacy
-      <code>nvvidconv</code>. The Intel probe is two-step too: prefer <code>vapostproc</code>, fall
-      back to <code>vaapipostproc</code>. The first backend that validates wins.
+      <code>HardwareDetector</code> probes the host; <code>PipelineFactory</code> queries the
+      live GStreamer registry via <code>gst_element_factory_find</code> to validate each
+      candidate — element presence is not the same as element working on this kernel, driver,
+      and chroma-subsampling combination. Jetson and Intel probes are two-step (prefer
+      <code>nvvideoconvert</code> / <code>vapostproc</code>; fall back to <code>nvvidconv</code>
+      / <code>vaapipostproc</code>). The first backend that validates wins. Per-action routing
+      within a backend is a hand-coded table from operator A/B measurement, not an autonomous
+      runtime optimiser.
     </p>
 
     <div class="arch-diagram-wrap">
@@ -892,16 +934,15 @@ source install/setup.bash</code></pre>
     <div class="finding" role="note">
       <h3>Jetson legacy <code>nvvidconv</code> BGR-CAPS gap</h3>
       <p>
-        On the dustynv L4T container (which ships the legacy <code>nvvidconv</code>
-        but not <code>nvvideoconvert</code>), <code>nvvidconv</code>'s sink/src caps do
-        not list <code>BGR</code>. Any GPU stage on this image carries a CPU
-        <code>videoconvert ↔ BGRx</code> adapter on the ingress boundary at full source
-        resolution. Routing is a hand-coded per-action table derived from operator
-        measurement on this hardware / element combination, not an autonomous runtime
-        optimiser: <code>resize</code> and <code>chain</code> keep the GPU path;
-        <code>crop</code> routes to CPU <code>videocrop</code>; <code>colorconvert</code>
-        keeps the GPU path but is bench-bound by dual-container CPU contention, not the
-        BGR adapter. Full Round-3 finding and contention math in
+        On the legacy <code>nvvidconv</code> element (still common on Jetson Orin
+        images), the sink/src caps do not list <code>BGR</code>. Any GPU stage on this
+        image carries a CPU <code>videoconvert ↔ BGRx</code> adapter on the ingress
+        boundary at full source resolution. Per-action routing is a hand-coded table
+        from operator A/B measurement, not an autonomous runtime optimiser:
+        <code>resize</code> and <code>chain</code> keep the GPU path;
+        <code>crop</code> routes to CPU <code>videocrop</code>. The Round-3 finding
+        on colorconvert (bench-harness CPU saturation, not BGR-adapter
+        dominance) lives in
         <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/orin_simple_summary.md"><code>orin_simple_summary.md</code></a>.
       </p>
     </div>
@@ -969,6 +1010,9 @@ source install/setup.bash</code></pre>
     <span class="section-eyebrow">05 — Parameters</span>
     <h2 class="section-title" id="params-title">Parameter reference</h2>
 
+    <details class="params-details">
+      <summary>Expand full parameter reference</summary>
+
     <h3 class="sub-title">Core resize</h3>
     <div class="tbl-wrap">
       <table class="tbl">
@@ -1008,11 +1052,14 @@ source install/setup.bash</code></pre>
         <tbody>
           <tr><td data-label="Parameter">input_transport</td><td data-label="Type">string</td><td data-label="Default"><code>raw</code></td><td data-label="Description">image_transport plugin for the input (<code>raw</code>, <code>compressed</code>, …).</td></tr>
           <tr><td data-label="Parameter">publish_camera_info</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Publish a transformed <code>CameraInfo</code> on the paired topic.</td></tr>
+          <tr><td data-label="Parameter">camera_info_input_topic</td><td data-label="Type">string</td><td data-label="Default"><code>""</code></td><td data-label="Description">Optional override; empty string derives <code>&lt;image_topic_namespace&gt;/camera_info</code> per ROS convention.</td></tr>
+          <tr><td data-label="Parameter">camera_info_output_topic</td><td data-label="Type">string</td><td data-label="Default"><code>""</code></td><td data-label="Description">Optional override for the published <code>CameraInfo</code> topic.</td></tr>
           <tr><td data-label="Parameter">source_width</td><td data-label="Type">int</td><td data-label="Default"><code>3840</code></td><td data-label="Description">Source caps width in pixels (GPU mode only).</td></tr>
           <tr><td data-label="Parameter">source_height</td><td data-label="Type">int</td><td data-label="Default"><code>2160</code></td><td data-label="Description">Source caps height in pixels (GPU mode only).</td></tr>
         </tbody>
       </table>
     </div>
+    </details>
   </div>
 </section>
 
@@ -1022,7 +1069,7 @@ source install/setup.bash</code></pre>
 <section id="benchmarks" aria-labelledby="bench-title">
   <div class="container">
     <span class="section-eyebrow">06 — Benchmarks</span>
-    <h2 class="section-title" id="bench-title">Benchmarks</h2>
+    <h2 class="section-title" id="bench-title">A/B captures on two hosts</h2>
 
     <p class="lede">
       A/B captures against stock ROS 2 Humble <code>image_proc</code> on two hosts: 4K BGR8 input at 10 Hz, 120 s per operation, two <code>component_container</code> processes. Latency is per-frame from publisher stamp to subscriber receive; full methodology, per-percentile / CPU / RSS / fps data, and the per-host findings live in
@@ -1032,39 +1079,40 @@ source install/setup.bash</code></pre>
     </p>
 
     <h3 class="sub-title">Intel desktop, GStreamer 1.20, direct-mode fallback</h3>
+    <p class="tbl-caption">Intra-process composition + DDS round-trip elimination, not GPU offload — VAAPI is in fallback mode on this GStreamer 1.20 host.</p>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>Action</th><th>Prism median (ms)</th><th>Stock median (ms)</th><th>Δ %</th></tr></thead>
         <tbody>
-          <tr><td><code>resize</code></td><td>4.55</td><td>10.77</td><td>−57.8 %</td></tr>
-          <tr><td><code>crop</code></td><td>4.27</td><td>22.65</td><td>−81.1 %</td></tr>
-          <tr><td><code>colorconvert</code></td><td>2.99</td><td>2323.65</td><td>−99.9 %</td></tr>
-          <tr><td><code>chain</code> (3 ops)</td><td>12.86</td><td>76.28</td><td>−83.1 %</td></tr>
+          <tr class="row-win"><td><code>resize</code></td><td>4.55</td><td>10.77</td><td>−57.8 %</td></tr>
+          <tr class="row-win"><td><code>crop</code></td><td>4.27</td><td>22.65</td><td>−81.1 %</td></tr>
+          <tr><td><code>colorconvert</code></td><td>2.99</td><td>2323.65</td><td>—</td></tr>
+          <tr class="row-win"><td><code>chain</code> (3 ops)</td><td>12.86</td><td>76.28</td><td>−83.1 %</td></tr>
         </tbody>
       </table>
     </div>
-    <p>
-      Full per-percentile data and methodology in
+    <p class="bench-note">
+      <code>colorconvert</code> Δ% omitted — stock baseline is a Python NumPy node that cannot drain 4K BGR8 at 10 Hz (<code>image_proc</code> ships no C++ colorconvert). Full per-percentile data, methodology, and the throughput-ceiling explanation in
       <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/intel_desktop_simple_summary.md"><code>intel_desktop_simple_summary.md</code></a>.
     </p>
 
-    <h3 class="sub-title">Jetson Orin Nano Super, JetPack 6.2, dustynv L4T container</h3>
-    <p>
-      Per-action backend on legacy <code>nvvidconv</code> (<code>resize</code>/<code>chain</code> GPU, <code>crop</code> CPU <code>videocrop</code>, <code>colorconvert</code> GPU). The BGR-CAPS gap that drives this routing, the colorconvert backpressure finding, and the empirical intra-process verification are documented in the linked summary.
+    <h3 class="sub-title">Jetson Orin Nano Super, JetPack 6.2</h3>
+    <p class="tbl-caption">
+      Per-action backend on legacy <code>nvvidconv</code> (<code>resize</code>/<code>chain</code> GPU, <code>crop</code> CPU <code>videocrop</code>, <code>colorconvert</code> GPU). The BGR-CAPS gap that drives this routing, the Round-3 colorconvert contention finding (bench-harness CPU saturation, not BGR-adapter dominance), and the empirical intra-process verification are documented in the linked summary.
     </p>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>Action</th><th>Prism median (ms)</th><th>Stock median (ms)</th><th>Δ %</th></tr></thead>
         <tbody>
           <tr><td><code>resize</code></td><td>21.77</td><td>—</td><td>—</td></tr>
-          <tr><td><code>crop</code></td><td>716.56</td><td>868.65</td><td>−17.5 %</td></tr>
-          <tr><td><code>colorconvert</code></td><td>1194.61</td><td>14295.86</td><td>−91.6 %</td></tr>
+          <tr class="row-win"><td><code>crop</code></td><td>716.56</td><td>868.65</td><td>−17.5 %</td></tr>
+          <tr><td><code>colorconvert</code></td><td>1194.61</td><td>14295.86</td><td>—</td></tr>
           <tr><td><code>chain</code> (3 ops)</td><td>17.11</td><td>—</td><td>—</td></tr>
         </tbody>
       </table>
     </div>
-    <p>
-      Stock-side <code>image_proc::ResizeNode</code> does not publish frames inside this container (an <code>image_proc</code> packaging issue, not a Prism finding) — so <code>resize</code> and <code>chain</code> are Prism-only. Full per-percentile data and methodology in
+    <p class="bench-note">
+      Stock-side <code>image_proc::ResizeNode</code> does not publish frames inside this container (an <code>image_proc</code> packaging issue, not a Prism finding) — so <code>resize</code> and <code>chain</code> are Prism-only; <code>colorconvert</code> Δ% is omitted for the same structural reason as Intel. Full per-percentile data, the Round-3 contention finding, and a single-process direct-mode 9.27 ms colorconvert reference in
       <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/orin_simple_summary.md"><code>orin_simple_summary.md</code></a>.
     </p>
 
