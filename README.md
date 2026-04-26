@@ -213,7 +213,7 @@ On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present b
 
 ### Jetson legacy `nvvidconv` BGR-CAPS gap
 
-On the dustynv L4T container (which ships the legacy `nvvidconv` but not `nvvideoconvert`), `nvvidconv`'s sink/src caps do not list `BGR`. Any GPU stage on this image carries a CPU `videoconvert ↔ BGRx` adapter on the ingress boundary at full source resolution. Per-action routing handles the cost-benefit: `resize` and `chain` keep the GPU path (small egress amortises the BGRx tax); `crop` routes to CPU `videocrop` directly because there is no shrinking step to amortise over; `colorconvert` keeps the GPU path and remains backpressured at 4K-to-4K, the legitimately-broken op on this image. An L4T image with `nvvideoconvert` (BGR-native CAPS) closes that case — see Roadmap.
+On the dustynv L4T container (which ships the legacy `nvvidconv` but not `nvvideoconvert`), `nvvidconv`'s sink/src caps do not list `BGR`. Any GPU stage on this image carries a CPU `videoconvert ↔ BGRx` adapter on the ingress boundary at full source resolution. Routing is a hand-coded per-action table derived from operator measurement on this hardware / element combination, not an autonomous runtime optimiser: `resize` and `chain` keep the GPU path (small egress amortises the BGRx tax); `crop` routes to CPU `videocrop` directly because there is no shrinking step to amortise over; `colorconvert` keeps the GPU path because a Round-3 follow-up run with the GPU stage removed produced statistically identical numbers — the colorconvert ceiling on this image is dual-container CPU contention from the bench harness, not the BGR adapter. See the Benchmarks Orin block for the full Round-3 finding.
 
 </details>
 
@@ -376,11 +376,22 @@ contribute.
 | mean RSS (MB)       | 1393     | 802     | | |
 | realised fps        | 0.21     | 2.70    | | |
 
-Both sides backpressured: the stock Python NumPy subscriber cannot drain
-4K BGR8→RGB8 at 10 Hz, and Prism's GPU path through legacy nvvidconv
-pays the CPU BGR↔BGRx adapter at full 4K with no shrinking step to
-amortize over. Prism is 91 % faster than stock but neither holds 10 Hz.
-This is the legitimately-broken op on this image.
+Both sides backpressured. Initial framing attributed Prism's 1194 ms
+median to the CPU BGR↔BGRx adapter on legacy nvvidconv. A subsequent
+A/B run (logged in `bench/results/orin_idea45_20260426T084812Z/`)
+routed colorconvert through pure CPU `videoconvert n-threads=4` —
+removing the GPU stage entirely — and produced statistically identical
+numbers (1188 ms / 2.38 fps). The ceiling is therefore **not** the BGR
+adapter on this op: it is dual-container CPU contention from the bench
+harness, which pins ~5 of the 6 Orin cores between the stock-side
+Python NumPy baseline (~2.5 cores at 250 % CPU) and Prism (~2 cores).
+The single-process direct-mode capture from April 25 measured 9.27 ms
+on this same hardware (`bench/results/orin_20260425T132225Z/`); the
+production ceiling is ~10–20 ms, not the bench's 1194 ms. Prism is
+91.6 % faster than stock under the same contention. The proposal's
+Section 9 `nvvideoconvert` capture (CUDA-resident colorspace, no CPU
+contention with the stock baseline) closes this case for production
+deployments.
 
 #### chain (crop → resize → colorconvert @ 10 Hz, mixed CPU `videocrop` + GPU resize/colorconvert; stock unavailable in this container)
 
