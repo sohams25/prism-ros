@@ -58,3 +58,23 @@ The wins below are intra-process composition + DDS round-trip elimination, not G
 | mean CPU (%)        | 103.2  | 49.2  | | |
 | mean RSS (MB)       | 885    | 747   | | |
 | realised fps        | 10.01  | 10.01 | | |
+
+## Chain-row median: bimodality and what's invariant across captures
+
+Per-frame Prism latency on the `chain` row is bimodal in this Apr-25
+capture and in an Apr-27 verification re-run (3 captures of the same
+operation against current HEAD): one cluster at 3-5 ms, one cluster
+at 12-15 ms. The median sits on the boundary between modes, so the
+proportion of frames in each mode dominates the published median; a
+small environmental shift (background CPU load, thermal state) moves
+the median across the boundary.
+
+Stable across both captures: p95 ≈ 14 ms, p99 in the 14-25 ms range,
+both cluster centres unchanged. The 12.86 ms headline is one valid
+snapshot of a bimodal distribution; the per-percentile data above is
+the reliable summary, and Prism still sits an order of magnitude
+below the stock side's 76 ms median in both captures.
+
+Apr-27 verification captures (12 CSVs, 3 runs × 4 operations,
+sha 5135572) live alongside this summary at
+[`intel_phase2_20260427/`](./intel_phase2_20260427/) for provenance.

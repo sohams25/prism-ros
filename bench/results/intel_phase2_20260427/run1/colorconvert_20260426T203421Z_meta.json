@@ -1,0 +1,33 @@
+{
+  "duration_s": 120.0,
+  "end_iso": "2026-04-26T20:34:13.256553+00:00",
+  "files": {
+    "prism_latency": "colorconvert_20260426T203421Z_prism.csv",
+    "prism_resources": "colorconvert_20260426T203421Z_prism_resources.csv",
+    "stock_latency": "colorconvert_20260426T203421Z_stock.csv",
+    "stock_resources": "colorconvert_20260426T203421Z_stock_resources.csv"
+  },
+  "gstreamer_version": "GStreamer 1.20.3",
+  "hostname": "BareMetal",
+  "operation": "colorconvert",
+  "prism_commit_sha": "5135572659640bd25597637d90b2014326ed81ae",
+  "ros_distro": "humble",
+  "row_counts": {
+    "prism_frames": 1200,
+    "prism_samples": 117,
+    "stock_frames": 92,
+    "stock_samples": 117
+  },
+  "start_iso": "2026-04-26T20:32:03.129172+00:00",
+  "uname": "Linux BareMetal 6.8.0-106-generic #106~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Mar  6 08:44:59 UTC  x86_64 x86_64",
+  "video_info": {
+    "codec": "h264",
+    "duration_s": 20.353667,
+    "fps": 29.97002997002997,
+    "height": 2160,
+    "width": 3840
+  },
+  "video_md5": "15ea868cfc466839f1744bc750c86fe6",
+  "video_path": "/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4",
+  "warmup_s": 10.0
+}

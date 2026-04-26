@@ -1,0 +1,155 @@
+[20:27:08Z] python3 in use: /usr/bin/python3 (Python 3.10.12)
+[20:27:08Z] sourcing ROS humble + workspace install
+[20:27:08Z] video ok: /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 (114938852 bytes)
+[20:27:08Z] HEAD: 5135572659640bd25597637d90b2014326ed81ae
+[20:27:08Z] === run 1 starting (output=/home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1) ===
+[20:27:08Z] run1 op=resize (capture 1/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=resize
+[run] warmup 10.0s ...
+[run] stock pids=[3079570]  prism pids=[3079572]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/resize_20260426T202927Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/resize_20260426T202927Z_stock.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/resize_20260426T202927Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/resize_20260426T202927Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/resize_20260426T202927Z_meta.json
+[20:29:28Z] run1 op=resize OK in 140s
+[20:29:36Z] run1 op=crop (capture 2/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=crop
+[run] warmup 10.0s ...
+[run] stock pids=[3084429]  prism pids=[3084431]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/crop_20260426T203154Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/crop_20260426T203154Z_stock.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/crop_20260426T203154Z_prism_resources.csv (118 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/crop_20260426T203154Z_stock_resources.csv (118 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/crop_20260426T203154Z_meta.json
+[20:31:54Z] run1 op=crop OK in 138s
+[20:32:02Z] run1 op=colorconvert (capture 3/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=colorconvert
+[run] warmup 10.0s ...
+[run] stock pids=[3088476, 3088486]  prism pids=[3088478]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/colorconvert_20260426T203421Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/colorconvert_20260426T203421Z_stock.csv (92 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/colorconvert_20260426T203421Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/colorconvert_20260426T203421Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/colorconvert_20260426T203421Z_meta.json
+[20:34:21Z] run1 op=colorconvert OK in 139s
+[20:34:29Z] run1 op=chain (capture 4/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=chain
+[run] warmup 10.0s ...
+[run] stock pids=[3096407, 3096417]  prism pids=[3096409]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/chain_20260426T203648Z_prism.csv (1201 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/chain_20260426T203648Z_stock.csv (1199 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/chain_20260426T203648Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/chain_20260426T203648Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run1/chain_20260426T203648Z_meta.json
+[20:36:48Z] run1 op=chain OK in 139s
+[20:36:56Z] === run 1 done ===
+[20:36:56Z] === run 2 starting (output=/home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2) ===
+[20:36:56Z] run2 op=resize (capture 5/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=resize
+[run] warmup 10.0s ...
+[run] stock pids=[3100463]  prism pids=[3100465]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/resize_20260426T203914Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/resize_20260426T203914Z_stock.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/resize_20260426T203914Z_prism_resources.csv (118 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/resize_20260426T203914Z_stock_resources.csv (118 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/resize_20260426T203914Z_meta.json
+[20:39:15Z] run2 op=resize OK in 139s
+[20:39:23Z] run2 op=crop (capture 6/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=crop
+[run] warmup 10.0s ...
+[run] stock pids=[3104721]  prism pids=[3104723]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/crop_20260426T204141Z_prism.csv (1198 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/crop_20260426T204141Z_stock.csv (1198 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/crop_20260426T204141Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/crop_20260426T204141Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/crop_20260426T204141Z_meta.json
+[20:41:41Z] run2 op=crop OK in 138s
+[20:41:49Z] run2 op=colorconvert (capture 7/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=colorconvert
+[run] warmup 10.0s ...
+[run] stock pids=[3109018, 3109028]  prism pids=[3109020]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/colorconvert_20260426T204408Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/colorconvert_20260426T204408Z_stock.csv (91 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/colorconvert_20260426T204408Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/colorconvert_20260426T204408Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/colorconvert_20260426T204408Z_meta.json
+[20:44:08Z] run2 op=colorconvert OK in 139s
+[20:44:16Z] run2 op=chain (capture 8/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=chain
+[run] warmup 10.0s ...
+[run] stock pids=[3114007, 3114017]  prism pids=[3114009]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/chain_20260426T204634Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/chain_20260426T204634Z_stock.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/chain_20260426T204634Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/chain_20260426T204634Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run2/chain_20260426T204634Z_meta.json
+[20:46:35Z] run2 op=chain OK in 139s
+[20:46:43Z] === run 2 done ===
+[20:46:43Z] === run 3 starting (output=/home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3) ===
+[20:46:43Z] run3 op=resize (capture 9/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=resize
+[run] warmup 10.0s ...
+[run] stock pids=[3117607]  prism pids=[3117609]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/resize_20260426T204901Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/resize_20260426T204901Z_stock.csv (1201 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/resize_20260426T204901Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/resize_20260426T204901Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/resize_20260426T204901Z_meta.json
+[20:49:01Z] run3 op=resize OK in 138s
+[20:49:09Z] run3 op=crop (capture 10/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=crop
+[run] warmup 10.0s ...
+[run] stock pids=[3121225]  prism pids=[3121227]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/crop_20260426T205128Z_prism.csv (1201 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/crop_20260426T205128Z_stock.csv (1199 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/crop_20260426T205128Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/crop_20260426T205128Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/crop_20260426T205128Z_meta.json
+[20:51:28Z] run3 op=crop OK in 139s
+[20:51:36Z] run3 op=colorconvert (capture 11/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=colorconvert
+[run] warmup 10.0s ...
+[run] stock pids=[3124819, 3124829]  prism pids=[3124821]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/colorconvert_20260426T205355Z_prism.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/colorconvert_20260426T205355Z_stock.csv (92 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/colorconvert_20260426T205355Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/colorconvert_20260426T205355Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/colorconvert_20260426T205355Z_meta.json
+[20:53:55Z] run3 op=colorconvert OK in 139s
+[20:54:03Z] run3 op=chain (capture 12/12) starting
+[run] probing /home/baremetal/Desktop/14690379_3840_2160_30fps.mp4...
+[run] video OK: {'codec': 'h264', 'width': 3840, 'height': 2160, 'fps': 29.97002997002997, 'duration_s': 20.353667}
+[run] launching: ros2 launch prism_image_proc A_B_comparison.launch.py video_path:=/home/baremetal/Desktop/14690379_3840_2160_30fps.mp4 operation:=chain
+[run] warmup 10.0s ...
+[run] stock pids=[3128792, 3128803]  prism pids=[3128794]
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/chain_20260426T205621Z_prism.csv (1201 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/chain_20260426T205621Z_stock.csv (1200 rows)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/chain_20260426T205621Z_prism_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/chain_20260426T205621Z_stock_resources.csv (117 samples)
+[run] wrote /home/baremetal/Desktop/Current Projects/SideProjects/ros_ws/src/prism-ros/bench/results/intel_phase2_20260427/run3/chain_20260426T205621Z_meta.json
+[20:56:22Z] run3 op=chain OK in 139s
+[20:56:30Z] === run 3 done ===
+[20:56:30Z] phase 2a complete: 12/12 captures attempted, 0 failed, total wall 1762s
