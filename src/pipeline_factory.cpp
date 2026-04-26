@@ -118,14 +118,16 @@ std::string resize_jetson(const PipelineConfig & c)
        << ",height=" << c.target_height;
     return ss.str();
   }
-  // Legacy nvvidconv: BGR is not in its CAPS, so we adapt to BGRx on each
-  // boundary (CPU videoconvert) and let the GPU do the actual scale.
-  ss << "videoconvert ! video/x-raw,format=BGRx"
+  // Legacy nvvidconv: BGR is not in its CAPS, so we adapt to BGRx on the
+  // ingress boundary (CPU videoconvert with n-threads=4) and let the GPU
+  // do the actual scale. Egress stays in BGRx; image_proc_node's appsink
+  // callback already handles BGRx -> BGR via cv::cvtColor in the same
+  // single-copy egress, which avoids a second full-frame CPU videoconvert.
+  ss << "videoconvert n-threads=4 ! video/x-raw,format=BGRx"
      << " ! nvvidconv compute-hw=1 interpolation-method=1"
      << " ! video/x-raw,format=BGRx"
      << ",width=" << c.target_width
-     << ",height=" << c.target_height
-     << " ! videoconvert ! video/x-raw,format=BGR";
+     << ",height=" << c.target_height;
   return ss.str();
 }
 
@@ -207,10 +209,12 @@ std::string colorconvert_fragment(const PlatformInfo & p, const PipelineConfig &
                                        : (fmt == "RGB"  ) ? "RGBA"
                                                           : "BGRx";
         std::ostringstream ssj;
-        ssj << "videoconvert ! video/x-raw,format=" << intermediate
+        // Drop the trailing CPU videoconvert: image_proc_node's appsink
+        // egress maps BGRx -> bgr8, RGBA -> rgb8, GRAY8 -> mono8 directly
+        // via cv::cvtColor in the same copy that already happens.
+        ssj << "videoconvert n-threads=4 ! video/x-raw,format=" << intermediate
             << " ! nvvidconv compute-hw=1"
-            << " ! video/x-raw,format=" << intermediate
-            << " ! videoconvert ! video/x-raw,format=" << fmt;
+            << " ! video/x-raw,format=" << intermediate;
         return ssj.str();
       }
       break;
@@ -266,14 +270,14 @@ std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
           throw std::invalid_argument(
             "crop rect extends beyond source_width/source_height");
         }
-        ss << "videoconvert ! video/x-raw,format=BGRx"
+        // Egress stays in BGRx; appsink callback maps BGRx -> bgr8.
+        ss << "videoconvert n-threads=4 ! video/x-raw,format=BGRx"
            << " ! nvvidconv compute-hw=1"
            << " left="   << c.crop_x
            << " right="  << right_l
            << " top="    << c.crop_y
            << " bottom=" << bottom_l
-           << " ! video/x-raw,format=BGRx"
-           << " ! videoconvert ! video/x-raw,format=BGR";
+           << " ! video/x-raw,format=BGRx";
         return ss.str();
       }
 
@@ -342,10 +346,10 @@ std::string flip_fragment(const PlatformInfo & p, const PipelineConfig & c)
       }
       // Legacy nvvidconv: same BGR boundary adapter as the other actions.
       std::ostringstream ssj;
-      ssj << "videoconvert ! video/x-raw,format=BGRx"
+      // Egress stays in BGRx; appsink callback maps BGRx -> bgr8.
+      ssj << "videoconvert n-threads=4 ! video/x-raw,format=BGRx"
           << " ! nvvidconv flip-method=" << method
-          << " ! video/x-raw,format=BGRx"
-          << " ! videoconvert ! video/x-raw,format=BGR";
+          << " ! video/x-raw,format=BGRx";
       return ssj.str();
     }
 

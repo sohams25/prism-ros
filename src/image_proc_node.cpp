@@ -511,12 +511,15 @@ GstFlowReturn ImageProcNode::on_new_sample(GstAppSink * sink, gpointer user_data
     out_encoding = "bgr8";
     out_channels = 3;
   } else if (fmt == GST_VIDEO_FORMAT_RGBA || fmt == GST_VIDEO_FORMAT_RGBx) {
+    // RGBA at egress means the upstream stage produced 4-channel R,G,B,A
+    // and the user's downstream contract is rgb8 (drop alpha, keep order).
+    // cv::cvtColor with COLOR_RGBA2RGB performs the channel drop in place.
     int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
     cv::Mat raw(h, w, CV_8UC4,
       const_cast<void *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
       static_cast<size_t>(stride));
-    cv::cvtColor(raw, out_mat, cv::COLOR_RGBA2BGR);
-    out_encoding = "bgr8";
+    cv::cvtColor(raw, out_mat, cv::COLOR_RGBA2RGB);
+    out_encoding = "rgb8";
     out_channels = 3;
   } else if (fmt == GST_VIDEO_FORMAT_NV12) {
     // Y plane + interleaved UV plane — assemble for OpenCV
