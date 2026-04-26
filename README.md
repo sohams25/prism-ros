@@ -165,7 +165,7 @@ Load any of the above into an `rclcpp_components::ComponentContainer` with `use_
 
 ## Architecture
 
-At startup `HardwareDetector` probes `/dev` for accelerator devices and runs `gst-inspect` against the GStreamer registry to confirm the matching elements load. `PipelineFactory` then builds a backend-specific pipeline fragment for each action in the chain, validates the complete pipeline live, and hands it to `ImageProcNode`. If no GPU pipeline validates, the node falls back to a direct `cv::resize` in the subscriber callback — no GStreamer involvement at all.
+At startup `HardwareDetector` probes `/dev` for accelerator devices, then queries the live GStreamer registry via `gst_element_factory_find` (the same C API that `gst-inspect` is built on) to confirm the matching elements load. The Jetson probe is two-step: prefer `nvvideoconvert`, fall back to the legacy `nvvidconv`. The Intel probe is two-step too: prefer `vapostproc`, fall back to `vaapipostproc`. `PipelineFactory` then builds a backend-specific pipeline fragment for each action in the chain, validates the complete pipeline live, and hands it to `ImageProcNode`. If no GPU element registers, the node falls back to a direct `cv::resize` in the subscriber callback — no GStreamer involvement at all.
 
 <!-- Do NOT add %%{init: {'theme': ...}}%% — GitHub's native Mermaid
      renderer auto-adapts to dark/light mode only when no theme is
@@ -174,8 +174,8 @@ At startup `HardwareDetector` probes `/dev` for accelerator devices and runs `gs
 flowchart TD
   Start([Startup]) --> HD[HardwareDetector]
   HD --> PF[PipelineFactory]
-  PF --> V{gst-inspect validates?}
-  V -->|Jetson path OK| NV[nvvideoconvert / NVMM]
+  PF --> V{registry validates?}
+  V -->|Jetson path OK| NV[nvvideoconvert / nvvidconv]
   V -->|Intel path OK| VA[vapostproc / VA-API]
   V -->|none valid| CV[cv::resize direct mode]
   NV --> Out([sensor_msgs/Image out])
@@ -187,7 +187,7 @@ flowchart TD
 
 | Priority | Platform | Detection | Processing |
 |---|---|---|---|
-| 1 | NVIDIA Jetson | `/dev/nvhost-*`, `/dev/nvmap` | GStreamer `nvvideoconvert` (CUDA / NVMM) |
+| 1 | NVIDIA Jetson | `/dev/nvhost-*`, `/dev/nvmap` | GStreamer `nvvideoconvert` (CUDA / NVMM); legacy `nvvidconv` accepted as second-step probe |
 | 2 | Intel VA-API | `/dev/dri/renderD*` + `vapostproc` in registry | GStreamer `vapostproc` |
 | 3 | CPU (always) | — | Direct `cv::resize` in callback |
 
@@ -288,49 +288,94 @@ together; Prism runs the full chain inside one `prism::ImageProcNode`.
 | mean RSS (MB)       | 885    | 747   | | |
 | realised fps        | 10.01  | 10.01 | | |
 
-### Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, direct-mode fallback
+### Jetson Orin Nano Super, JetPack 6.2, ROS 2 Humble in dustynv container, GPU path via `nvvidconv` (legacy element with BGR adapter)
 
 `nvvideoconvert` is not packaged in the `dustynv/ros:humble-desktop-l4t-r36.2.0`
-image; Prism's GPU path fails live validation on this host and falls back to
-`cv::resize`. The Orin numbers below measure Prism's pipeline architecture and
-DDS round-trip elimination on aarch64, not GPU offload.
+image, but the legacy `nvvidconv` element is. Prism's `validate_platform()`
+two-step probe (modern element preferred, legacy element accepted) selects
+`nvvidconv` on this host and emits a Jetson GPU pipeline that uses it.
 
-`crop` and `colorconvert` are full A/B comparisons. For `resize` and `chain`,
-`image_proc::ResizeNode` did not publish frames inside this container (an
-`image_proc` packaging issue specific to the dustynv image, not a Prism
-finding); the A/B delta would be meaningless, so those two operations are
-reported as Prism-only throughput.
+`nvvidconv`'s sink/src caps do not list `BGR`. Each pipeline therefore wraps
+the GPU stage with a CPU `videoconvert ↔ BGRx` adapter on each boundary. On
+4K BGR8 input at 10 Hz, that adapter tax dominates: at 640×480 egress
+(`resize`, `chain`) the GPU path holds 10 Hz throughput but adds latency
+relative to direct-mode `cv::resize` on this same hardware; at near-4K
+egress (`crop` 2560×1440, `colorconvert` 4K → 4K) the CPU `videoconvert`
+on every frame becomes the bottleneck and the pipeline goes into
+backpressure. This is a property of the legacy element's CAPS, not of
+Prism — on a non-dustynv image with `nvvideoconvert` (BGR-native CAPS),
+this regime would not apply. That capture is in the proposal's
+forward-looking section 9.
 
-#### crop (3840×2160 → 2560×1440 @ 10 Hz, A/B)
+For reference, the prior April-25 direct-mode capture on this same Orin
+(when neither GPU element was registered in the container — CSVs preserved
+at `bench/results/orin_20260425T132225Z/`) showed `cv::resize` medians of
+7.61 ms (resize), 9.47 ms (crop), 9.27 ms (colorconvert), 9.00 ms (chain),
+all at ≈10 fps. The architectural win that
+reaches the un-served fleet comes from intra-process composition +
+DDS-elimination; the GPU path on dustynv L4T is held back by the missing
+`nvvideoconvert` package.
+
+#### resize (3840×2160 → 640×480 @ 10 Hz, GPU path via `nvvidconv`; stock unavailable in this container)
+
+`image_proc::ResizeNode` does not publish frames inside this container
+(an `image_proc` packaging issue specific to the dustynv image, not a Prism
+finding); A/B delta omitted.
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 53.48  | 9.47  | -44.01 | -82.3 % |
-| mean latency (ms)   | 108.59 | 18.16 | -90.43 | -83.3 % |
-| p95 latency (ms)    | 486.50 | 48.22 | | |
-| p99 latency (ms)    | 816.97 | 211.48| | |
-| mean CPU (%)        | 155.8  | 128.2 | | |
-| mean RSS (MB)       | 375    | 373   | | |
-| realised fps        | 9.91   | 9.98  | | |
+| median latency (ms) | — | 32.80 | — | — |
+| mean latency (ms)   | — | 35.17 | — | — |
+| p95 latency (ms)    | — | 44.88 | | |
+| p99 latency (ms)    | — | 56.16 | | |
+| mean CPU (%)        | 116.1 | 146.3 | | |
+| mean RSS (MB)       | 356   | 671   | | |
+| realised fps        | — | 9.97 | | |
 
-#### colorconvert (BGR8 → RGB8 @ 10 Hz, A/B)
+#### crop (3840×2160 → 2560×1440 @ 10 Hz, GPU path via `nvvidconv`, A/B)
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | 8170.05  | 9.27   | -8160.78 | -99.9 % |
-| mean latency (ms)   | 8353.75  | 15.98  | -8337.77 | -99.8 % |
-| p95 latency (ms)    | 10119.81 | 30.95  | | |
-| p99 latency (ms)    | 10151.45 | 212.35 | | |
-| mean CPU (%)        | 262.9    | 127.9  | | |
-| mean RSS (MB)       | 1345     | 371    | | |
-| realised fps        | 0.25     | 9.97   | | |
+| median latency (ms) | 45.93  | 14306.33 | +14260.40 | +31046.8 % |
+| mean latency (ms)   | 399.91 | 14256.81 | +13856.90 | +3465.0 % |
+| p95 latency (ms)    | 1217.81  | 19409.17 | | |
+| p99 latency (ms)    | 1924.88  | 20575.15 | | |
+| mean CPU (%)        | 153.7  | 114.4    | | |
+| mean RSS (MB)       | 470    | 2049     | | |
+| realised fps        | 7.21   | 1.63     | | |
 
-#### resize and chain (Prism-only; stock baseline unavailable in this container)
+#### colorconvert (BGR8 → RGB8 @ 10 Hz, GPU path via `nvvidconv`, A/B)
 
-| operation     | Prism median (ms) | Prism mean (ms) | Prism p95 (ms) | Prism p99 (ms) | Prism frames (post-trim, ≈105 s window) | Realised fps |
-| ------------- | ----------------: | --------------: | -------------: | -------------: | --------------------------------------: | -----------: |
-| `resize`      |              7.61 |            8.88 |          11.43 |          22.90 |                                    1047 |         9.99 |
-| chain (3 ops) |              9.00 |           11.76 |          21.78 |          32.06 |                                    1044 |         9.97 |
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | 12871.20 | 12102.25 | -768.95 | -6.0 % |
+| mean latency (ms)   | 12466.50 | 12040.61 | -425.89 | -3.4 % |
+| p95 latency (ms)    | 15719.46 | 19372.44 | | |
+| p99 latency (ms)    | 15841.43 | 22609.29 | | |
+| mean CPU (%)        | 247.0    | 198.7    | | |
+| mean RSS (MB)       | 1339     | 3172     | | |
+| realised fps        | 0.21     | 2.05     | | |
+
+#### chain (crop → resize → colorconvert @ 10 Hz, GPU path via `nvvidconv`; stock unavailable in this container)
+
+`image_proc::ResizeNode` is the second step in the stock-side launch and
+does not publish; A/B delta omitted, Prism throughput reported standalone.
+
+| metric | stock | prism | Δ | Δ % |
+| --- | ---: | ---: | ---: | ---: |
+| median latency (ms) | — | 35.51 | — | — |
+| mean latency (ms)   | — | 37.26 | — | — |
+| p95 latency (ms)    | — | 44.92 | | |
+| p99 latency (ms)    | — | 53.00 | | |
+| mean CPU (%)        | 134.4 | 150.7 | | |
+| mean RSS (MB)       | 397   | 682   | | |
+| realised fps        | — | 10.00 | | |
+
+The `chain` row uses `crop → resize → colorconvert`. The resize stage cuts
+the frame to 640×480 before `colorconvert` runs, so the BGRx adapters in
+`colorconvert` and the connecting boundary are on the small frame, not 4K.
+That is the structural reason `chain` keeps 10 Hz throughput while the
+standalone `crop` and `colorconvert` rows do not.
 
 ### Reproducing
 

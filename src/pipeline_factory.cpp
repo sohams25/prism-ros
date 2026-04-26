@@ -30,6 +30,19 @@ PlatformInfo validate_platform(
       required_element = "vaapipostproc";
       break;
     case HardwarePlatform::NVIDIA_JETSON:
+      // Prefer the modern element; fall back to the legacy nvvidconv
+      // shipped on Tegra L4T images that pre-date nvvideoconvert.
+      if (gst_element_factory_find("nvvideoconvert")) {
+        RCLCPP_INFO(logger, "Plugin validated: 'nvvideoconvert' found");
+        return detected;
+      }
+      if (gst_element_factory_find("nvvidconv")) {
+        RCLCPP_INFO(
+          logger,
+          "Plugin validated: 'nvvidconv' (legacy) found "
+          "— GPU path will use legacy element with BGR adapter");
+        return detected;
+      }
       required_element = "nvvideoconvert";
       break;
     default:
@@ -96,12 +109,23 @@ std::string resize_vaapi(const PipelineConfig & c)
 std::string resize_jetson(const PipelineConfig & c)
 {
   std::ostringstream ss;
-  ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
-     << " ! video/x-raw(memory:NVMM),format=NV12"
-     << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
-     << " ! video/x-raw,format=BGR"
+  if (gst_element_factory_find("nvvideoconvert")) {
+    ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
+       << " ! video/x-raw(memory:NVMM),format=NV12"
+       << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
+       << " ! video/x-raw,format=BGR"
+       << ",width=" << c.target_width
+       << ",height=" << c.target_height;
+    return ss.str();
+  }
+  // Legacy nvvidconv: BGR is not in its CAPS, so we adapt to BGRx on each
+  // boundary (CPU videoconvert) and let the GPU do the actual scale.
+  ss << "videoconvert ! video/x-raw,format=BGRx"
+     << " ! nvvidconv compute-hw=1 interpolation-method=1"
+     << " ! video/x-raw,format=BGRx"
      << ",width=" << c.target_width
-     << ",height=" << c.target_height;
+     << ",height=" << c.target_height
+     << " ! videoconvert ! video/x-raw,format=BGR";
   return ss.str();
 }
 
@@ -172,7 +196,24 @@ std::string colorconvert_fragment(const PlatformInfo & p, const PipelineConfig &
   const std::string fmt = encoding_to_gst_format(c.target_encoding);
   const char * element = nullptr;
   switch (p.platform) {
-    case HardwarePlatform::NVIDIA_JETSON: element = "nvvideoconvert"; break;
+    case HardwarePlatform::NVIDIA_JETSON:
+      if (gst_element_factory_find("nvvideoconvert")) {
+        element = "nvvideoconvert";  // emits BGR/RGB/GRAY8 directly
+      } else {
+        // Legacy nvvidconv supports BGRx, RGBA, GRAY8 — not BGR/RGB.
+        // Use a 4-channel intermediate; CPU videoconvert lands in the
+        // requested 3-channel encoding (or stays at GRAY8).
+        const std::string intermediate = (fmt == "GRAY8") ? "GRAY8"
+                                       : (fmt == "RGB"  ) ? "RGBA"
+                                                          : "BGRx";
+        std::ostringstream ssj;
+        ssj << "videoconvert ! video/x-raw,format=" << intermediate
+            << " ! nvvidconv compute-hw=1"
+            << " ! video/x-raw,format=" << intermediate
+            << " ! videoconvert ! video/x-raw,format=" << fmt;
+        return ssj.str();
+      }
+      break;
     case HardwarePlatform::INTEL_VAAPI:
       element = gst_element_factory_find("vapostproc") ? "vapostproc" : "videoconvert";
       break;
@@ -204,16 +245,37 @@ std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
   std::ostringstream ss;
   switch (p.platform) {
     case HardwarePlatform::NVIDIA_JETSON:
-      // nvvideoconvert supports src-* properties for input-side cropping.
-      ss << "nvvideoconvert"
-         << " src-x=" << c.crop_x
-         << " src-y=" << c.crop_y
-         << " src-width="  << c.crop_width
-         << " src-height=" << c.crop_height
-         << " ! video/x-raw,format=BGR"
-         << ",width=" << c.crop_width
-         << ",height=" << c.crop_height;
-      return ss.str();
+      if (gst_element_factory_find("nvvideoconvert")) {
+        // nvvideoconvert supports src-* properties for input-side cropping.
+        ss << "nvvideoconvert"
+           << " src-x=" << c.crop_x
+           << " src-y=" << c.crop_y
+           << " src-width="  << c.crop_width
+           << " src-height=" << c.crop_height
+           << " ! video/x-raw,format=BGR"
+           << ",width=" << c.crop_width
+           << ",height=" << c.crop_height;
+        return ss.str();
+      }
+      // Legacy nvvidconv crops via left/right/top/bottom — same math as
+      // videocrop. BGR boundary adapters identical to resize_jetson legacy.
+      {
+        const int right_l  = c.source_width  - (c.crop_x + c.crop_width);
+        const int bottom_l = c.source_height - (c.crop_y + c.crop_height);
+        if (right_l < 0 || bottom_l < 0) {
+          throw std::invalid_argument(
+            "crop rect extends beyond source_width/source_height");
+        }
+        ss << "videoconvert ! video/x-raw,format=BGRx"
+           << " ! nvvidconv compute-hw=1"
+           << " left="   << c.crop_x
+           << " right="  << right_l
+           << " top="    << c.crop_y
+           << " bottom=" << bottom_l
+           << " ! video/x-raw,format=BGRx"
+           << " ! videoconvert ! video/x-raw,format=BGR";
+        return ss.str();
+      }
 
     case HardwarePlatform::INTEL_VAAPI:
     case HardwarePlatform::CPU_FALLBACK:
@@ -269,13 +331,23 @@ std::string flip_fragment(const PlatformInfo & p, const PipelineConfig & c)
   }
 
   switch (p.platform) {
-    case HardwarePlatform::NVIDIA_JETSON:
-      // nvvideoconvert flip-method: 1=counterclockwise90, 2=rotate180,
-      // 3=clockwise90, 4=horizontal, 5=upper-right-diag, 6=vertical,
-      // 7=upper-left-diag. We use 4 (horizontal) and 6 (vertical).
-      return c.flip_method == "horizontal"
-        ? "nvvideoconvert flip-method=4"
-        : "nvvideoconvert flip-method=6";
+    case HardwarePlatform::NVIDIA_JETSON: {
+      // flip-method enum: 4=horizontal-flip, 6=vertical-flip on both
+      // nvvideoconvert and the legacy nvvidconv element.
+      const int method = c.flip_method == "horizontal" ? 4 : 6;
+      if (gst_element_factory_find("nvvideoconvert")) {
+        return c.flip_method == "horizontal"
+          ? "nvvideoconvert flip-method=4"
+          : "nvvideoconvert flip-method=6";
+      }
+      // Legacy nvvidconv: same BGR boundary adapter as the other actions.
+      std::ostringstream ssj;
+      ssj << "videoconvert ! video/x-raw,format=BGRx"
+          << " ! nvvidconv flip-method=" << method
+          << " ! video/x-raw,format=BGRx"
+          << " ! videoconvert ! video/x-raw,format=BGR";
+      return ssj.str();
+    }
 
     case HardwarePlatform::INTEL_VAAPI:
       if (gst_element_factory_find("vapostproc")) {
