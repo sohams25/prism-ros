@@ -217,9 +217,11 @@ On stock ROS 2 Humble (GStreamer 1.20), the `vaapipostproc` element is present b
 
 A/B captures against stock ROS 2 Humble `image_proc` on two hosts. 4K BGR8
 input from `prism::MediaStreamerNode` (3840×2160 H.264 → BGR8) at 10 Hz,
-120 s sustained per operation, first 10 s dropped as warmup. Two
-`component_container` processes per run; latency is per-frame from publish
-stamp to subscriber receive. Methodology and per-run CSVs live in
+120 s sustained capture per operation (preceded by a 10 s warmup), with
+the first 10 s and last 5 s of latency samples dropped at analysis time —
+leaving a ≈105 s analysis window. Two `component_container` processes per
+run; latency is per-frame from publish stamp to subscriber receive.
+Methodology and per-run CSVs live in
 [`bench/`](bench/); commit-pinned per-host summaries are
 [`bench/results/intel_desktop_simple_summary.md`](bench/results/intel_desktop_simple_summary.md)
 and [`bench/results/orin_simple_summary.md`](bench/results/orin_simple_summary.md).
@@ -290,24 +292,16 @@ together; Prism runs the full chain inside one `prism::ImageProcNode`.
 
 `nvvideoconvert` is not packaged in the `dustynv/ros:humble-desktop-l4t-r36.2.0`
 image; Prism's GPU path fails live validation on this host and falls back to
-`cv::resize`. On the stock side, `image_proc::ResizeNode` did not publish
-frames in this container (likely an `image_proc` runtime issue specific to
-this image); only the Prism side has data for `resize` and `chain`. The
-`crop` and `colorconvert` rows are full A/B comparisons.
+`cv::resize`. The Orin numbers below measure Prism's pipeline architecture and
+DDS round-trip elimination on aarch64, not GPU offload.
 
-#### resize (3840×2160 → 640×480 @ 10 Hz)
+`crop` and `colorconvert` are full A/B comparisons. For `resize` and `chain`,
+`image_proc::ResizeNode` did not publish frames inside this container (an
+`image_proc` packaging issue specific to the dustynv image, not a Prism
+finding); the A/B delta would be meaningless, so those two operations are
+reported as Prism-only throughput.
 
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 7.61  | — | — |
-| mean latency (ms)   | — | 8.88  | — | — |
-| p95 latency (ms)    | — | 11.43 | | |
-| p99 latency (ms)    | — | 22.90 | | |
-| mean CPU (%)        | 116.3 | 124.9 | | |
-| mean RSS (MB)       | 368   | 374   | | |
-| realised fps        | — | 9.99  | | |
-
-#### crop (3840×2160 → 2560×1440 @ 10 Hz)
+#### crop (3840×2160 → 2560×1440 @ 10 Hz, A/B)
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
@@ -319,7 +313,7 @@ this image); only the Prism side has data for `resize` and `chain`. The
 | mean RSS (MB)       | 375    | 373   | | |
 | realised fps        | 9.91   | 9.98  | | |
 
-#### colorconvert (BGR8 → RGB8 @ 10 Hz)
+#### colorconvert (BGR8 → RGB8 @ 10 Hz, A/B)
 
 | metric | stock | prism | Δ | Δ % |
 | --- | ---: | ---: | ---: | ---: |
@@ -331,17 +325,12 @@ this image); only the Prism side has data for `resize` and `chain`. The
 | mean RSS (MB)       | 1345     | 371    | | |
 | realised fps        | 0.25     | 9.97   | | |
 
-#### chain (`crop → resize → colorconvert` @ 10 Hz)
+#### resize and chain (Prism-only; stock baseline unavailable in this container)
 
-| metric | stock | prism | Δ | Δ % |
-| --- | ---: | ---: | ---: | ---: |
-| median latency (ms) | — | 9.00  | — | — |
-| mean latency (ms)   | — | 11.76 | — | — |
-| p95 latency (ms)    | — | 21.78 | | |
-| p99 latency (ms)    | — | 32.06 | | |
-| mean CPU (%)        | 133.5 | 128.7 | | |
-| mean RSS (MB)       | 398   | 363   | | |
-| realised fps        | — | 9.97  | | |
+| operation     | Prism median (ms) | Prism mean (ms) | Prism p95 (ms) | Prism p99 (ms) | Prism frames (post-trim, ≈105 s window) | Realised fps |
+| ------------- | ----------------: | --------------: | -------------: | -------------: | --------------------------------------: | -----------: |
+| `resize`      |              7.61 |            8.88 |          11.43 |          22.90 |                                    1047 |         9.99 |
+| chain (3 ops) |              9.00 |           11.76 |          21.78 |          32.06 |                                    1044 |         9.97 |
 
 ### Reproducing
 

@@ -954,13 +954,13 @@ source install/setup.bash</code></pre>
       <table class="tbl">
         <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td data-label="Parameter">use_scale</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Scale by factor when true; use absolute <code>width</code>/<code>height</code> when false.</td></tr>
+          <tr><td data-label="Parameter">use_scale</td><td data-label="Type">bool</td><td data-label="Default"><code>false</code></td><td data-label="Description">Scale by factor when true; use absolute <code>width</code>/<code>height</code> when false.</td></tr>
           <tr><td data-label="Parameter">scale_width</td><td data-label="Type">double</td><td data-label="Default"><code>1.0</code></td><td data-label="Description">Horizontal scale factor applied when <code>use_scale</code> is true.</td></tr>
           <tr><td data-label="Parameter">scale_height</td><td data-label="Type">double</td><td data-label="Default"><code>1.0</code></td><td data-label="Description">Vertical scale factor applied when <code>use_scale</code> is true.</td></tr>
-          <tr><td data-label="Parameter">width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Absolute output width in pixels.</td></tr>
-          <tr><td data-label="Parameter">height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Absolute output height in pixels.</td></tr>
-          <tr><td data-label="Parameter">input_topic</td><td data-label="Type">string</td><td data-label="Default"><code>image</code></td><td data-label="Description">Input <code>sensor_msgs/Image</code> topic name.</td></tr>
-          <tr><td data-label="Parameter">output_topic</td><td data-label="Type">string</td><td data-label="Default"><code>resize</code></td><td data-label="Description">Output <code>sensor_msgs/Image</code> topic name.</td></tr>
+          <tr><td data-label="Parameter">width</td><td data-label="Type">int</td><td data-label="Default"><code>640</code></td><td data-label="Description">Absolute output width in pixels.</td></tr>
+          <tr><td data-label="Parameter">height</td><td data-label="Type">int</td><td data-label="Default"><code>480</code></td><td data-label="Description">Absolute output height in pixels.</td></tr>
+          <tr><td data-label="Parameter">input_topic</td><td data-label="Type">string</td><td data-label="Default"><code>/camera/image_raw</code></td><td data-label="Description">Input <code>sensor_msgs/Image</code> topic name.</td></tr>
+          <tr><td data-label="Parameter">output_topic</td><td data-label="Type">string</td><td data-label="Default"><code>/camera/image_processed</code></td><td data-label="Description">Output <code>sensor_msgs/Image</code> topic name.</td></tr>
         </tbody>
       </table>
     </div>
@@ -976,7 +976,7 @@ source install/setup.bash</code></pre>
           <tr><td data-label="Parameter">crop_y</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop origin Y (pixels from top).</td></tr>
           <tr><td data-label="Parameter">crop_width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop region width in pixels.</td></tr>
           <tr><td data-label="Parameter">crop_height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop region height in pixels.</td></tr>
-          <tr><td data-label="Parameter">flip_method</td><td data-label="Type">string</td><td data-label="Default"><code>horizontal</code></td><td data-label="Description">One of <code>horizontal</code>, <code>vertical</code>, <code>both</code>.</td></tr>
+          <tr><td data-label="Parameter">flip_method</td><td data-label="Type">string</td><td data-label="Default"><code>none</code></td><td data-label="Description">One of <code>none</code>, <code>horizontal</code>, <code>vertical</code>.</td></tr>
         </tbody>
       </table>
     </div>
@@ -988,8 +988,8 @@ source install/setup.bash</code></pre>
         <tbody>
           <tr><td data-label="Parameter">input_transport</td><td data-label="Type">string</td><td data-label="Default"><code>raw</code></td><td data-label="Description">image_transport plugin for the input (<code>raw</code>, <code>compressed</code>, …).</td></tr>
           <tr><td data-label="Parameter">publish_camera_info</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Publish a transformed <code>CameraInfo</code> on the paired topic.</td></tr>
-          <tr><td data-label="Parameter">source_width</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Expected source width; <code>0</code> auto-detects from the first frame.</td></tr>
-          <tr><td data-label="Parameter">source_height</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Expected source height; <code>0</code> auto-detects from the first frame.</td></tr>
+          <tr><td data-label="Parameter">source_width</td><td data-label="Type">int</td><td data-label="Default"><code>3840</code></td><td data-label="Description">Source caps width in pixels (GPU mode only).</td></tr>
+          <tr><td data-label="Parameter">source_height</td><td data-label="Type">int</td><td data-label="Default"><code>2160</code></td><td data-label="Description">Source caps height in pixels (GPU mode only).</td></tr>
         </tbody>
       </table>
     </div>
@@ -1007,9 +1007,11 @@ source install/setup.bash</code></pre>
     <p class="lede">
       A/B captures against stock ROS 2 Humble <code>image_proc</code> on two hosts.
       4K BGR8 input from <code>prism::MediaStreamerNode</code> (3840×2160 H.264 → BGR8)
-      at 10 Hz, 120 s sustained per operation, first 10 s dropped as warmup. Two
-      <code>component_container</code> processes per run; latency is per-frame from
-      publish stamp to subscriber receive. Methodology and per-run CSVs live in
+      at 10 Hz, 120 s sustained capture per operation (preceded by a 10 s warmup), with
+      the first 10 s and last 5 s of latency samples dropped at analysis time, leaving
+      a ≈105 s analysis window. Two <code>component_container</code> processes per
+      run; latency is per-frame from publish stamp to subscriber receive. Methodology
+      and per-run CSVs live in
       <a href="https://github.com/sohams25/prism-ros/tree/main/bench"><code>bench/</code></a>;
       commit-pinned per-host summaries are
       <a href="https://github.com/sohams25/prism-ros/blob/main/bench/results/intel_desktop_simple_summary.md"><code>intel_desktop_simple_summary.md</code></a>
@@ -1102,30 +1104,17 @@ source install/setup.bash</code></pre>
     <p>
       <code>nvvideoconvert</code> is not packaged in the
       <code>dustynv/ros:humble-desktop-l4t-r36.2.0</code> image; Prism's GPU path fails
-      live validation on this host and falls back to <code>cv::resize</code>. On the
-      stock side, <code>image_proc::ResizeNode</code> did not publish frames in this
-      container (likely an <code>image_proc</code> runtime issue specific to this image);
-      only the Prism side has data for <code>resize</code> and <code>chain</code>.
-      <code>crop</code> and <code>colorconvert</code> are full A/B comparisons.
+      live validation on this host and falls back to <code>cv::resize</code>. The Orin
+      numbers below measure Prism's pipeline architecture and DDS round-trip
+      elimination on aarch64, not GPU offload. <code>crop</code> and
+      <code>colorconvert</code> are full A/B comparisons; <code>resize</code> and
+      <code>chain</code> are reported as Prism-only throughput because
+      <code>image_proc::ResizeNode</code> did not publish frames in this container (an
+      <code>image_proc</code> packaging issue specific to the dustynv image, not a
+      Prism finding).
     </p>
 
-    <h4>resize (3840×2160 → 640×480 @ 10 Hz)</h4>
-    <div class="tbl-wrap">
-      <table class="tbl">
-        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
-        <tbody>
-          <tr><td>median latency (ms)</td><td>—</td><td>7.61</td><td>—</td><td>—</td></tr>
-          <tr><td>mean latency (ms)</td><td>—</td><td>8.88</td><td>—</td><td>—</td></tr>
-          <tr><td>p95 latency (ms)</td><td>—</td><td>11.43</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>—</td><td>22.90</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>116.3</td><td>124.9</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>368</td><td>374</td><td></td><td></td></tr>
-          <tr><td>realised fps</td><td>—</td><td>9.99</td><td></td><td></td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz)</h4>
+    <h4>crop (3840×2160 → 2560×1440 @ 10 Hz, A/B)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
@@ -1141,7 +1130,7 @@ source install/setup.bash</code></pre>
       </table>
     </div>
 
-    <h4>colorconvert (BGR8 → RGB8 @ 10 Hz)</h4>
+    <h4>colorconvert (BGR8 → RGB8 @ 10 Hz, A/B)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
         <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
@@ -1157,18 +1146,13 @@ source install/setup.bash</code></pre>
       </table>
     </div>
 
-    <h4>chain (<code>crop → resize → colorconvert</code> @ 10 Hz)</h4>
+    <h4>resize and chain (Prism-only; stock baseline unavailable in this container)</h4>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>metric</th><th>stock</th><th>prism</th><th>Δ</th><th>Δ %</th></tr></thead>
+        <thead><tr><th>operation</th><th>Prism median (ms)</th><th>Prism mean (ms)</th><th>Prism p95 (ms)</th><th>Prism p99 (ms)</th><th>frames (post-trim, ≈105 s)</th><th>fps</th></tr></thead>
         <tbody>
-          <tr><td>median latency (ms)</td><td>—</td><td>9.00</td><td>—</td><td>—</td></tr>
-          <tr><td>mean latency (ms)</td><td>—</td><td>11.76</td><td>—</td><td>—</td></tr>
-          <tr><td>p95 latency (ms)</td><td>—</td><td>21.78</td><td></td><td></td></tr>
-          <tr><td>p99 latency (ms)</td><td>—</td><td>32.06</td><td></td><td></td></tr>
-          <tr><td>mean CPU (%)</td><td>133.5</td><td>128.7</td><td></td><td></td></tr>
-          <tr><td>mean RSS (MB)</td><td>398</td><td>363</td><td></td><td></td></tr>
-          <tr><td>realised fps</td><td>—</td><td>9.97</td><td></td><td></td></tr>
+          <tr><td><code>resize</code></td><td>7.61</td><td>8.88</td><td>11.43</td><td>22.90</td><td>1047</td><td>9.99</td></tr>
+          <tr><td>chain (3 ops)</td><td>9.00</td><td>11.76</td><td>21.78</td><td>32.06</td><td>1044</td><td>9.97</td></tr>
         </tbody>
       </table>
     </div>
