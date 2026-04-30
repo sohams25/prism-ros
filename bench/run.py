@@ -49,7 +49,7 @@ ACCEL_CONTAINER = 'accel_container'
 # --------------------------------------------------------------------------
 # ffprobe helper
 # --------------------------------------------------------------------------
-def probe_video(path):
+def probe_video(path, require_4k=True):
     if not os.path.exists(path):
         raise RuntimeError(f'video not found: {path}')
 
@@ -69,7 +69,7 @@ def probe_video(path):
 
     if codec not in ('h264', 'hevc', 'mpeg4', 'mjpeg'):
         raise RuntimeError(f'unsupported codec: {codec}')
-    if width < 3840 or height < 2160:
+    if require_4k and (width < 3840 or height < 2160):
         raise RuntimeError(f'resolution under 4K: {width}x{height}')
 
     try:
@@ -237,6 +237,10 @@ def main():
     ap.add_argument('--warmup', type=float, default=10.0,
                     help='seconds to wait after launch before starting capture')
     ap.add_argument('--output-dir', required=True)
+    ap.add_argument('--allow-non-4k', action='store_true',
+                    help='Skip the 4K-source guard. Use for resolution-sensitive '
+                         'experiments (e.g. v0.2 rectify, where same-size 4K '
+                         'output saturates the Python rclpy receiver).')
     args = ap.parse_args()
 
     video = os.path.abspath(args.video)
@@ -245,7 +249,7 @@ def main():
 
     # ---- Probe video. Bail loudly on unsupported sources. ----
     print(f'[run] probing {video}...', flush=True)
-    info = probe_video(video)
+    info = probe_video(video, require_4k=not args.allow_non_4k)
     print(f'[run] video OK: {info}', flush=True)
 
     # ---- Start the A/B launch as a subprocess. ----
