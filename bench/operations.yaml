@@ -87,6 +87,33 @@ rectify:
     /results/F2_E2.1_probe.md for why no hardware rectify backend exists
     on Prism's segment.
 
+rectify_chain:
+  prism_params:
+    action: rectify,resize
+    width: 640
+    height: 480
+  stock_plugin: chained
+  stock_equivalent: rectify_then_resize_piped
+  stock_params:
+    rectify: {}
+    resize:
+      use_scale: false
+      width: 640
+      height: 480
+  source_overrides:
+    focal_x: 1900.0
+    focal_y: 1900.0
+    distortion_d: [-0.30, 0.10, 0.0, 0.0, -0.02]
+  notes: >
+    The v0.2 F2A experiment. Stock side is two image_proc nodes
+    DDS-piped together (image_proc::RectifyNode -> image_proc::ResizeNode);
+    Prism side is one prism::ImageProcNode running action="rectify,resize"
+    in a single CPU direct-mode pipeline. Latency delta reflects the
+    same chain-architecture mechanism as the v0.1.0 chain row: single
+    pipeline avoiding intermediate DDS hops between staged nodes. NOT
+    a kernel-speed claim. CPU-only by design — see CLAUDE.md
+    "CPU/GPU compartmentalization."
+
 chain:
   prism_params:
     action: crop,resize,colorconvert

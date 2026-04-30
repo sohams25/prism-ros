@@ -230,7 +230,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--operation', required=True,
                     choices=['resize', 'crop', 'colorconvert', 'rectify',
-                             'chain'])
+                             'rectify_chain', 'chain'])
     ap.add_argument('--video', required=True)
     ap.add_argument('--duration', type=float, default=120.0,
                     help='capture duration in seconds (excludes warmup)')

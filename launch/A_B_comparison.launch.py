@@ -32,6 +32,7 @@ _FASTDDS_PROFILE = os.path.join(
 # stock side, where three separate nodes are DDS-piped together.
 _STOCK_CHAIN_CROP_OUT = '/legacy/_chain_cropped'
 _STOCK_CHAIN_RESIZE_OUT = '/legacy/_chain_resized'
+_STOCK_RCHAIN_RECT_OUT = '/legacy/_rchain_rectified'
 
 
 def _reap_orphans():
@@ -190,6 +191,49 @@ def _stock_rectify_nodes(video_path):
             parameters=[{
                 'interpolation': 1,
             }],
+        ),
+    ], []
+
+
+def _stock_rectify_chain_nodes(video_path):
+    # Stock: image_proc::RectifyNode -> image_proc::ResizeNode piped
+    # through DDS. Intra-process explicitly off on every node downstream
+    # of the source so the intermediate hop actually serialises through
+    # DDS — same shape as the existing _stock_chain_nodes graph.
+    return [
+        _source_node('legacy_source',
+                     '/legacy/image_raw', '/legacy/camera_info',
+                     video_path, False,
+                     extra_params=_RECTIFY_SOURCE_OVERRIDES),
+        ComposableNode(
+            package='image_proc',
+            plugin='image_proc::RectifyNode',
+            name='legacy_rchain_rectify',
+            remappings=[
+                ('image', '/legacy/image_raw'),
+                ('camera_info', '/legacy/camera_info'),
+                ('image_rect', _STOCK_RCHAIN_RECT_OUT),
+            ],
+            parameters=[{'interpolation': 1}],
+            extra_arguments=[{'use_intra_process_comms': False}],
+        ),
+        ComposableNode(
+            package='image_proc',
+            plugin='image_proc::ResizeNode',
+            name='legacy_rchain_resize',
+            remappings=[
+                ('image/image_raw', _STOCK_RCHAIN_RECT_OUT),
+                ('image/camera_info', '/legacy/camera_info'),
+                ('resize/image_raw', '/legacy/image_processed'),
+                ('resize/camera_info', '/legacy/_rchain_resized_info'),
+            ],
+            parameters=[{
+                'use_scale': False,
+                'height': 480,
+                'width': 640,
+                'interpolation': 1,
+            }],
+            extra_arguments=[{'use_intra_process_comms': False}],
         ),
     ], []
 
@@ -363,6 +407,33 @@ def _accel_rectify_node(video_path):
     ]
 
 
+def _accel_rectify_chain_node(video_path):
+    return [
+        _source_node('accel_source',
+                     '/accelerated/image_raw', '/accelerated/camera_info',
+                     video_path, True,
+                     extra_params=_RECTIFY_SOURCE_OVERRIDES),
+        ComposableNode(
+            package='prism_image_proc',
+            plugin='prism::ImageProcNode',
+            name='accel_rectify_chain',
+            parameters=[{
+                'input_topic': '/accelerated/image_raw',
+                'output_topic': '/accelerated/image_processed',
+                'action': 'rectify,resize',
+                'source_width': 3840,
+                'source_height': 2160,
+                'use_scale': False,
+                'width': 640,
+                'height': 480,
+                'camera_info_input_topic': '/accelerated/camera_info',
+                'camera_info_output_topic': '/accelerated/image_processed/camera_info',
+            }],
+            extra_arguments=[{'use_intra_process_comms': True}],
+        ),
+    ]
+
+
 def _accel_chain_node(video_path):
     return [
         _source_node('accel_source',
@@ -395,19 +466,21 @@ def _accel_chain_node(video_path):
 # Per-operation dispatch
 # --------------------------------------------------------------------------
 _STOCK_DISPATCH = {
-    'resize':       _stock_resize_nodes,
-    'crop':         _stock_crop_nodes,
-    'colorconvert': _stock_colorconvert_nodes,
-    'rectify':      _stock_rectify_nodes,
-    'chain':        _stock_chain_nodes,
+    'resize':         _stock_resize_nodes,
+    'crop':           _stock_crop_nodes,
+    'colorconvert':   _stock_colorconvert_nodes,
+    'rectify':        _stock_rectify_nodes,
+    'rectify_chain':  _stock_rectify_chain_nodes,
+    'chain':          _stock_chain_nodes,
 }
 
 _ACCEL_DISPATCH = {
-    'resize':       _accel_resize_node,
-    'crop':         _accel_crop_node,
-    'colorconvert': _accel_colorconvert_node,
-    'rectify':      _accel_rectify_node,
-    'chain':        _accel_chain_node,
+    'resize':         _accel_resize_node,
+    'crop':           _accel_crop_node,
+    'colorconvert':   _accel_colorconvert_node,
+    'rectify':        _accel_rectify_node,
+    'rectify_chain':  _accel_rectify_chain_node,
+    'chain':          _accel_chain_node,
 }
 
 

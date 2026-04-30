@@ -301,23 +301,24 @@ void ImageProcNode::publish_transformed_camera_info(
   sensor_msgs::msg::CameraInfo out = *info_in;
   out.header = image_header;
 
-  for (const auto & transform : info_transforms_) {
-    transform(out, config_);
-  }
-
-  // Rectify needs the LUT-derived new_K to reach the published K and P.
-  // The transform in pipeline_factory zeroes distortion and sets R, but
-  // K/P depend on cv::getOptimalNewCameraMatrix and live on this node.
+  // Rectify needs the LUT-derived new_K folded in BEFORE downstream
+  // transforms run, so that a chained resize after rectify scales the
+  // rectified K correctly. The static rectify_camera_info transform
+  // handles distortion and R; this block handles K/P which depend on
+  // cv::getOptimalNewCameraMatrix and live on this node.
   if (action_chain_has_rectify_ && rectify_lut_ready_) {
     out.k = {
       rectify_new_K_(0, 0), rectify_new_K_(0, 1), rectify_new_K_(0, 2),
       rectify_new_K_(1, 0), rectify_new_K_(1, 1), rectify_new_K_(1, 2),
       rectify_new_K_(2, 0), rectify_new_K_(2, 1), rectify_new_K_(2, 2)};
-    // P = [new_K | 0]
     out.p = {
       rectify_new_K_(0, 0), rectify_new_K_(0, 1), rectify_new_K_(0, 2), 0.0,
       rectify_new_K_(1, 0), rectify_new_K_(1, 1), rectify_new_K_(1, 2), 0.0,
       rectify_new_K_(2, 0), rectify_new_K_(2, 1), rectify_new_K_(2, 2), 0.0};
+  }
+
+  for (const auto & transform : info_transforms_) {
+    transform(out, config_);
   }
 
   info_pub_->publish(out);
@@ -728,23 +729,24 @@ void ImageProcNode::launch_direct()
   target_w_ = config_.target_width;
   target_h_ = config_.target_height;
 
-  // Direct mode supports the standalone 'resize' and 'rectify' actions.
-  // Mixed chains (and any other single-action choice) fall through to
-  // cv::resize-only with a warning, matching the v0.1.0 behaviour for
-  // chains that the GPU path would normally handle.
+  // Direct mode supports the standalone 'resize' / 'rectify' actions
+  // and the 'rectify,resize' chain (the v0.2 F2A mechanism — single
+  // pipeline replacing two DDS-piped image_proc nodes). Other chains
+  // fall through to cv::resize-only with a warning.
   PipelineFactory factory(platform_info_, config_);
   const auto & chain = factory.action_chain();
   const bool single_resize =
     chain.size() == 1 && chain[0] == "resize";
   const bool single_rectify =
     chain.size() == 1 && chain[0] == "rectify";
+  const bool rectify_then_resize =
+    chain.size() == 2 && chain[0] == "rectify" && chain[1] == "resize";
 
-  if (!single_resize && !single_rectify) {
+  if (!single_resize && !single_rectify && !rectify_then_resize) {
     RCLCPP_WARN(get_logger(),
-      "Action chain '%s' is not a standalone resize or rectify; direct "
-      "mode runs cv::resize only and skips other actions. Enable a GPU "
-      "backend to use the full chain (rectify always uses CPU direct mode "
-      "by design).",
+      "Action chain '%s' is not supported in direct mode; running "
+      "cv::resize only. Direct mode handles standalone resize, "
+      "standalone rectify, or the rectify+resize chain.",
       config_.action.c_str());
     PipelineConfig resize_only = config_;
     resize_only.action = "resize";
@@ -895,8 +897,23 @@ void ImageProcNode::on_image_direct(sensor_msgs::msg::Image::UniquePtr msg)
         "(K must be non-zero)");
       return;
     }
-    cv::remap(src, dst, rectify_map1_, rectify_map2_,
+    cv::Mat rectified;
+    cv::remap(src, rectified, rectify_map1_, rectify_map2_,
               cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+    // If the chain is "rectify,resize", fold the resize into the same
+    // call before publishing — same architectural shape as v0.1.0's
+    // chain row (single pipeline instead of multiple DDS-piped nodes).
+    // The chain detection (size == 2 && [0] == rectify && [1] == resize)
+    // is reflected in launch_direct's allow-list above; we don't need
+    // to re-validate here.
+    if (target_w_ != static_cast<int>(rectified.cols) ||
+        target_h_ != static_cast<int>(rectified.rows))
+    {
+      cv::resize(rectified, dst, cv::Size(target_w_, target_h_),
+                 0, 0, cv::INTER_LINEAR);
+    } else {
+      dst = std::move(rectified);
+    }
   } else {
     cv::resize(src, dst, cv::Size(target_w_, target_h_),
                0, 0, cv::INTER_LINEAR);
