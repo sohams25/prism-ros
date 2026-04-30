@@ -1,0 +1,33 @@
+{
+  "duration_s": 120.0,
+  "end_iso": "2026-04-30T09:44:16.375847+00:00",
+  "files": {
+    "prism_latency": "rectify_chain_20260430T094424Z_prism.csv",
+    "prism_resources": "rectify_chain_20260430T094424Z_prism_resources.csv",
+    "stock_latency": "rectify_chain_20260430T094424Z_stock.csv",
+    "stock_resources": "rectify_chain_20260430T094424Z_stock_resources.csv"
+  },
+  "gstreamer_version": "unknown",
+  "hostname": "ubuntu",
+  "operation": "rectify_chain",
+  "prism_commit_sha": "unknown",
+  "ros_distro": "humble",
+  "row_counts": {
+    "prism_frames": 1200,
+    "prism_samples": 117,
+    "stock_frames": 0,
+    "stock_samples": 117
+  },
+  "start_iso": "2026-04-30T09:42:06.061320+00:00",
+  "uname": "Linux ubuntu 5.15.185-tegra #1 SMP PREEMPT Thu Jan 15 19:24:38 PST 2026 aarch64 aarch64",
+  "video_info": {
+    "codec": "h264",
+    "duration_s": 20.353667,
+    "fps": 29.97002997002997,
+    "height": 1080,
+    "width": 1920
+  },
+  "video_md5": "a1d6fe9d14a9bc12d9311fd23ccec0d8",
+  "video_path": "/ros2_ws/soham_work/source_1080p.mp4",
+  "warmup_s": 10.0
+}
