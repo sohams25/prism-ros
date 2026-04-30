@@ -59,10 +59,18 @@ add_library(prism_image_proc_component SHARED
   src/resize_node.cpp
   src/crop_node.cpp
   src/color_convert_node.cpp
+  src/rectify_node.cpp
 )
+
+# rectify_node uses cv::initUndistortRectifyMap and
+# cv::getOptimalNewCameraMatrix from opencv_calib3d.
+find_package(OpenCV REQUIRED COMPONENTS calib3d imgproc core)
 
 target_link_libraries(prism_image_proc_component
   prism_core
+  opencv_calib3d
+  opencv_imgproc
+  opencv_core
 )
 
 ament_target_dependencies(prism_image_proc_component
@@ -79,6 +87,7 @@ rclcpp_components_register_nodes(prism_image_proc_component
   "prism::ResizeNode"
   "prism::CropNode"
   "prism::ColorConvertNode"
+  "prism::RectifyNode"
 )
 
 # ---------------------------------------------------------------------------

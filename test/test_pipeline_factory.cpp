@@ -86,8 +86,50 @@ TEST(ActionChainParser, TrimsWhitespace)
 TEST(ActionChainParser, RejectsUnknown)
 {
   EXPECT_THROW(
-    PipelineFactory::parse_action_chain("rectify"),
+    PipelineFactory::parse_action_chain("debayer"),
     std::invalid_argument);
+}
+
+TEST(ActionChainParser, AcceptsRectify)
+{
+  const auto names = PipelineFactory::parse_action_chain("rectify");
+  ASSERT_EQ(names.size(), 1u);
+  EXPECT_EQ(names[0], "rectify");
+}
+
+TEST(RectifyCameraInfoTransform, ZeroesDistortionAndSetsIdentityR)
+{
+  PipelineConfig c;
+  c.action = "rectify";
+
+  PipelineFactory factory(cpu_platform(), c);
+  auto transforms = factory.camera_info_transforms();
+  ASSERT_EQ(transforms.size(), 1u);
+
+  CameraInfo info = make_info(1920, 1080, 1900.0, 1900.0, 960.0, 540.0);
+  // Pre-condition: distortion is non-zero, R may be anything.
+  ASSERT_FALSE(info.d.empty());
+  EXPECT_NE(info.d[0], 0.0);
+
+  apply(transforms, info, c);
+
+  // Post-condition: distortion zeroed, R = identity. K/P are NOT updated by
+  // the transform alone — that happens in image_proc_node when the LUT
+  // is built from the runtime CameraInfo (the new_K depends on
+  // cv::getOptimalNewCameraMatrix and lives on the node, not in the
+  // factory). Width and height pass through unchanged.
+  EXPECT_EQ(info.distortion_model, "plumb_bob");
+  ASSERT_EQ(info.d.size(), 5u);
+  for (double v : info.d) {
+    EXPECT_DOUBLE_EQ(v, 0.0);
+  }
+  EXPECT_DOUBLE_EQ(info.r[0], 1.0);
+  EXPECT_DOUBLE_EQ(info.r[4], 1.0);
+  EXPECT_DOUBLE_EQ(info.r[8], 1.0);
+  EXPECT_DOUBLE_EQ(info.r[1], 0.0);
+  EXPECT_DOUBLE_EQ(info.r[3], 0.0);
+  EXPECT_EQ(info.width, 1920u);
+  EXPECT_EQ(info.height, 1080u);
 }
 
 TEST(ActionChainParser, RejectsEmpty)

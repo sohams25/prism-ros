@@ -4,9 +4,11 @@
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <gst/video/video.h>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <unordered_set>
 
@@ -31,7 +33,24 @@ ImageProcNode::ImageProcNode(const rclcpp::NodeOptions & options)
     (platform_info_.platform == HardwarePlatform::INTEL_VAAPI &&
      gst_element_factory_find("vapostproc"));
 
-  if (has_working_gpu) {
+  // Rectify is a CPU-only direct-mode action by design — see the v0.2
+  // E2.1 capability probe and the CPU/GPU compartmentalization design
+  // note. If the chain contains rectify, we force direct mode regardless
+  // of GPU availability, so cv::remap runs on CPU and the GPU stays free
+  // for downstream perception consumers.
+  {
+    const auto chain_str = get_parameter("action").as_string();
+    try {
+      const auto names = PipelineFactory::parse_action_chain(chain_str);
+      action_chain_has_rectify_ =
+        std::find(names.begin(), names.end(), "rectify") != names.end();
+    } catch (const std::exception &) {
+      // parse failures surface again from launch_direct/build_pipeline.
+      action_chain_has_rectify_ = false;
+    }
+  }
+
+  if (has_working_gpu && !action_chain_has_rectify_) {
     build_pipeline();
     launch_pipeline();
   } else {
@@ -238,9 +257,25 @@ void ImageProcNode::rebuild_from_params()
     (platform_info_.platform == HardwarePlatform::NVIDIA_JETSON) ||
     (platform_info_.platform == HardwarePlatform::INTEL_VAAPI &&
      gst_element_factory_find("vapostproc"));
-  direct_mode_ = !has_working_gpu;
 
-  if (has_working_gpu) {
+  // Re-evaluate the rectify-in-chain flag — the action parameter may
+  // have just changed.
+  try {
+    const auto names = PipelineFactory::parse_action_chain(
+      get_parameter("action").as_string());
+    action_chain_has_rectify_ =
+      std::find(names.begin(), names.end(), "rectify") != names.end();
+  } catch (const std::exception &) {
+    action_chain_has_rectify_ = false;
+  }
+
+  // Invalidate the rectify LUT — it may have been built against the
+  // previous parameter set.
+  rectify_lut_ready_ = false;
+
+  direct_mode_ = !has_working_gpu || action_chain_has_rectify_;
+
+  if (has_working_gpu && !action_chain_has_rectify_) {
     build_pipeline();
     launch_pipeline();
   } else {
@@ -269,6 +304,22 @@ void ImageProcNode::publish_transformed_camera_info(
   for (const auto & transform : info_transforms_) {
     transform(out, config_);
   }
+
+  // Rectify needs the LUT-derived new_K to reach the published K and P.
+  // The transform in pipeline_factory zeroes distortion and sets R, but
+  // K/P depend on cv::getOptimalNewCameraMatrix and live on this node.
+  if (action_chain_has_rectify_ && rectify_lut_ready_) {
+    out.k = {
+      rectify_new_K_(0, 0), rectify_new_K_(0, 1), rectify_new_K_(0, 2),
+      rectify_new_K_(1, 0), rectify_new_K_(1, 1), rectify_new_K_(1, 2),
+      rectify_new_K_(2, 0), rectify_new_K_(2, 1), rectify_new_K_(2, 2)};
+    // P = [new_K | 0]
+    out.p = {
+      rectify_new_K_(0, 0), rectify_new_K_(0, 1), rectify_new_K_(0, 2), 0.0,
+      rectify_new_K_(1, 0), rectify_new_K_(1, 1), rectify_new_K_(1, 2), 0.0,
+      rectify_new_K_(2, 0), rectify_new_K_(2, 1), rectify_new_K_(2, 2), 0.0};
+  }
+
   info_pub_->publish(out);
 }
 
@@ -677,19 +728,24 @@ void ImageProcNode::launch_direct()
   target_w_ = config_.target_width;
   target_h_ = config_.target_height;
 
-  // Direct mode implements only the 'resize' action (cv::resize). If the
-  // configured action chain contains anything else, warn and fall through
-  // to resize-only behavior — the action chain is a GPU-path feature.
+  // Direct mode supports the standalone 'resize' and 'rectify' actions.
+  // Mixed chains (and any other single-action choice) fall through to
+  // cv::resize-only with a warning, matching the v0.1.0 behaviour for
+  // chains that the GPU path would normally handle.
   PipelineFactory factory(platform_info_, config_);
   const auto & chain = factory.action_chain();
-  if (chain.size() != 1 || chain[0] != "resize") {
+  const bool single_resize =
+    chain.size() == 1 && chain[0] == "resize";
+  const bool single_rectify =
+    chain.size() == 1 && chain[0] == "rectify";
+
+  if (!single_resize && !single_rectify) {
     RCLCPP_WARN(get_logger(),
-      "Action chain '%s' contains non-resize operations; direct mode "
-      "(no GPU) supports only 'resize'. Running cv::resize only and "
-      "skipping the other actions. Enable a GPU backend to use the full chain.",
+      "Action chain '%s' is not a standalone resize or rectify; direct "
+      "mode runs cv::resize only and skips other actions. Enable a GPU "
+      "backend to use the full chain (rectify always uses CPU direct mode "
+      "by design).",
       config_.action.c_str());
-    // Collapse info_transforms_ to the resize transform only, so the
-    // published CameraInfo matches what direct mode actually does.
     PipelineConfig resize_only = config_;
     resize_only.action = "resize";
     PipelineFactory resize_factory(platform_info_, resize_only);
@@ -719,10 +775,105 @@ void ImageProcNode::launch_direct()
 
   setup_camera_info_io(config_.input_topic, config_.output_topic);
 
+  if (single_rectify) {
+    RCLCPP_INFO(get_logger(),
+      "Direct mode — cv::remap rectify(%s, transport=%s) on %s "
+      "(LUT computed from CameraInfo on first frame; CPU-only by design)",
+      config_.input_topic.c_str(), transport.c_str(),
+      config_.output_topic.c_str());
+  } else {
+    RCLCPP_INFO(get_logger(),
+      "Direct mode — cv::resize(%s, transport=%s → %dx%d) on %s "
+      "(no GStreamer overhead)",
+      config_.input_topic.c_str(), transport.c_str(),
+      target_w_, target_h_, config_.output_topic.c_str());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rectify LUT — computed from the cached CameraInfo. The undistort map
+// (map1/map2) is invariant in K, D, and image dimensions; rebuild only
+// triggers when one of those changes.
+// ---------------------------------------------------------------------------
+
+bool ImageProcNode::ensure_rectify_lut(uint32_t img_width, uint32_t img_height)
+{
+  if (img_width == 0 || img_height == 0) { return false; }
+
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr info_in;
+  {
+    std::lock_guard<std::mutex> lock(info_mutex_);
+    info_in = last_info_;
+  }
+  if (!info_in) { return false; }
+
+  // K must have a non-zero focal length to be usable. CameraInfo with
+  // K all zeros means the upstream calibration hasn't been published yet.
+  if (info_in->k[0] <= 0.0 || info_in->k[4] <= 0.0) { return false; }
+
+  // Detect changes that invalidate the cached LUT. Image dimensions can
+  // diverge from CameraInfo dims temporarily (the image stream may be
+  // running at the source resolution while CameraInfo is published once
+  // per second by a calibration node), so we use the image dims for the
+  // LUT and fold them into the change-detection.
+  const bool dims_changed =
+    img_width  != rectify_W_snapshot_ ||
+    img_height != rectify_H_snapshot_;
+  bool intrinsics_changed = !rectify_lut_ready_;
+  for (size_t i = 0; i < 9; ++i) {
+    if (info_in->k[i] != rectify_K_snapshot_[i]) {
+      intrinsics_changed = true;
+      break;
+    }
+  }
+  if (info_in->d.size() != rectify_D_snapshot_.size()) {
+    intrinsics_changed = true;
+  } else {
+    for (size_t i = 0; i < info_in->d.size(); ++i) {
+      if (info_in->d[i] != rectify_D_snapshot_[i]) {
+        intrinsics_changed = true;
+        break;
+      }
+    }
+  }
+
+  if (rectify_lut_ready_ && !dims_changed && !intrinsics_changed) {
+    return true;
+  }
+
+  cv::Matx33d K(
+    info_in->k[0], info_in->k[1], info_in->k[2],
+    info_in->k[3], info_in->k[4], info_in->k[5],
+    info_in->k[6], info_in->k[7], info_in->k[8]);
+  cv::Mat D;
+  if (info_in->d.empty()) {
+    D = cv::Mat::zeros(1, 5, CV_64F);
+  } else {
+    D = cv::Mat(1, static_cast<int>(info_in->d.size()), CV_64F);
+    for (size_t i = 0; i < info_in->d.size(); ++i) {
+      D.at<double>(0, static_cast<int>(i)) = info_in->d[i];
+    }
+  }
+
+  const cv::Size sz(static_cast<int>(img_width), static_cast<int>(img_height));
+  cv::Matx33d new_K = cv::getOptimalNewCameraMatrix(K, D, sz, 0.0, sz);
+  cv::initUndistortRectifyMap(
+    K, D, cv::Mat::eye(3, 3, CV_64F), new_K, sz, CV_16SC2,
+    rectify_map1_, rectify_map2_);
+
+  rectify_new_K_ = new_K;
+  rectify_K_snapshot_ = info_in->k;
+  rectify_D_snapshot_ = info_in->d;
+  rectify_W_snapshot_ = img_width;
+  rectify_H_snapshot_ = img_height;
+  rectify_lut_ready_ = true;
+
   RCLCPP_INFO(get_logger(),
-    "Direct mode — cv::resize(%s, transport=%s → %dx%d) on %s (no GStreamer overhead)",
-    config_.input_topic.c_str(), transport.c_str(),
-    target_w_, target_h_, config_.output_topic.c_str());
+    "Rectify LUT built — %ux%u, fx=%.1f fy=%.1f cx=%.1f cy=%.1f, |D|=%zu",
+    img_width, img_height,
+    new_K(0, 0), new_K(1, 1), new_K(0, 2), new_K(1, 2),
+    info_in->d.size());
+  return true;
 }
 
 void ImageProcNode::on_image_direct(sensor_msgs::msg::Image::UniquePtr msg)
@@ -731,16 +882,26 @@ void ImageProcNode::on_image_direct(sensor_msgs::msg::Image::UniquePtr msg)
   if (msg->width == 0 || msg->height == 0) { return; }
 
   // Wrap the incoming BGR data as a cv::Mat (zero-copy reference into
-  // the intra-process UniquePtr; the cv::resize call below writes to a
-  // fresh dst, and the publish step then copies dst into the outgoing
-  // Image message).
+  // the intra-process UniquePtr).
   cv::Mat src(msg->height, msg->width, CV_8UC3, msg->data.data(), msg->step);
 
-  // Resize
   cv::Mat dst;
-  cv::resize(src, dst, cv::Size(target_w_, target_h_), 0, 0, cv::INTER_LINEAR);
+  if (action_chain_has_rectify_) {
+    if (!ensure_rectify_lut(msg->width, msg->height)) {
+      // Wait for the first usable CameraInfo. Drop the frame quietly;
+      // a steady warn would spam at the source frame rate.
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+        "rectify: dropping frame — CameraInfo not yet available "
+        "(K must be non-zero)");
+      return;
+    }
+    cv::remap(src, dst, rectify_map1_, rectify_map2_,
+              cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+  } else {
+    cv::resize(src, dst, cv::Size(target_w_, target_h_),
+               0, 0, cv::INTER_LINEAR);
+  }
 
-  // Publish
   auto out = std::make_unique<sensor_msgs::msg::Image>();
   out->header = msg->header;
   out->width = dst.cols;

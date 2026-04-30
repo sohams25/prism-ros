@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <image_transport/image_transport.hpp>
+#include <opencv2/core.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
@@ -56,6 +57,21 @@ private:
   int target_w_ = 640;
   int target_h_ = 480;
 
+  // Rectify-action state. The LUT is computed lazily on the first
+  // CameraInfo with non-zero K, then re-used for every subsequent frame.
+  // Recompute is triggered when K, D, or image dimensions change.
+  bool action_chain_has_rectify_ = false;
+  cv::Mat rectify_map1_;
+  cv::Mat rectify_map2_;
+  cv::Matx33d rectify_new_K_{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  bool rectify_lut_ready_ = false;
+  // Snapshot of the inputs to the LUT, so we can detect when CameraInfo
+  // changes enough to require recomputation.
+  std::array<double, 9> rectify_K_snapshot_{};
+  std::vector<double> rectify_D_snapshot_;
+  uint32_t rectify_W_snapshot_ = 0;
+  uint32_t rectify_H_snapshot_ = 0;
+
   void declare_parameters();
   PipelineConfig load_config_from_params() const;
   void detect_hardware();
@@ -88,6 +104,12 @@ private:
   void on_image_direct(sensor_msgs::msg::Image::UniquePtr msg);
   static void destroy_ros_image(gpointer user_data);
   static GstFlowReturn on_new_sample(GstAppSink * sink, gpointer user_data);
+
+  // Rectify helpers. ensure_rectify_lut returns true if the LUT is ready
+  // (either it already was, or it was successfully computed from the
+  // cached CameraInfo). Recompute triggers if K, D, or image dimensions
+  // changed since the last LUT build.
+  bool ensure_rectify_lut(uint32_t img_width, uint32_t img_height);
 };
 
 }  // namespace prism

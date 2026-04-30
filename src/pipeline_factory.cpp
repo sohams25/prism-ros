@@ -386,6 +386,39 @@ void flip_camera_info(
   // 'none': no-op.
 }
 
+// ---------------------------------------------------------------------------
+// Action: rectify
+// ---------------------------------------------------------------------------
+// Rectify is a CPU-only direct-mode action by design. The GStreamer
+// fragment is "identity" — when a working GPU is detected the chain
+// containing rectify still falls back to direct mode in image_proc_node,
+// because the segment Prism targets has no hardware-accelerated remap
+// element with a BGR contract (validated in the v0.2 E2.1 capability
+// probe). Keeping rectify CPU-bound is also Prism's positioning line:
+// image_proc on CPU, GPU stays free for downstream perception.
+
+std::string rectify_fragment(
+  const PlatformInfo & /*p*/, const PipelineConfig & /*c*/)
+{
+  return "identity";
+}
+
+// Rectified output uses the new K returned by getOptimalNewCameraMatrix
+// with R = identity and zero distortion. The actual K transform happens
+// in image_proc_node (it has the matching cv::Mat handy from LUT
+// computation); here we only zero the distortion model, since
+// distortion_model + d are not part of PipelineConfig.
+void rectify_camera_info(
+  sensor_msgs::msg::CameraInfo & info, const PipelineConfig & /*c*/)
+{
+  info.distortion_model = "plumb_bob";
+  std::fill(info.d.begin(), info.d.end(), 0.0);
+  // R = identity (rectified frame aligns with the original)
+  info.r = {1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0};
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -400,6 +433,7 @@ PipelineFactory::registry()
     {"colorconvert", ActionDescriptor{&colorconvert_fragment, &colorconvert_camera_info}},
     {"crop",         ActionDescriptor{&crop_fragment,         &crop_camera_info}},
     {"flip",         ActionDescriptor{&flip_fragment,         &flip_camera_info}},
+    {"rectify",      ActionDescriptor{&rectify_fragment,      &rectify_camera_info}},
   };
   return r;
 }
