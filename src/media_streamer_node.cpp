@@ -17,6 +17,15 @@ MediaStreamerNode::MediaStreamerNode(const rclcpp::NodeOptions & options)
   declare_parameter("loop", true);
   declare_parameter("image_topic", "/camera/image_raw");
   declare_parameter("info_topic", "/camera/camera_info");
+  // Optional CameraInfo overrides — used by the rectify A/B harness to
+  // publish a realistic fisheye + radial-tangential distortion model
+  // instead of the default zero-distortion identity. Empty distortion_d
+  // means "use zeros" (preserves v0.1.0 behaviour). Non-zero focal_x/y
+  // override the default fx=fy=width baseline.
+  declare_parameter<std::vector<double>>(
+    "distortion_d", std::vector<double>{});
+  declare_parameter("focal_x", 0.0);
+  declare_parameter("focal_y", 0.0);
 
   video_path_ = get_parameter("video_path").as_string();
   loop_ = get_parameter("loop").as_bool();
@@ -54,12 +63,20 @@ void MediaStreamerNode::init_camera_info(int width, int height)
   info_msg_.width = width;
   info_msg_.height = height;
   info_msg_.distortion_model = "plumb_bob";
-  info_msg_.d = {0.0, 0.0, 0.0, 0.0, 0.0};
 
-  double fx = static_cast<double>(width);
-  double fy = fx;
-  double cx = fx / 2.0;
-  double cy = static_cast<double>(height) / 2.0;
+  const auto override_d = get_parameter("distortion_d").as_double_array();
+  if (override_d.empty()) {
+    info_msg_.d = {0.0, 0.0, 0.0, 0.0, 0.0};
+  } else {
+    info_msg_.d.assign(override_d.begin(), override_d.end());
+  }
+
+  const double fx_override = get_parameter("focal_x").as_double();
+  const double fy_override = get_parameter("focal_y").as_double();
+  const double fx = (fx_override > 0.0) ? fx_override : static_cast<double>(width);
+  const double fy = (fy_override > 0.0) ? fy_override : fx;
+  const double cx = static_cast<double>(width)  / 2.0;
+  const double cy = static_cast<double>(height) / 2.0;
 
   info_msg_.k = {fx, 0, cx, 0, fy, cy, 0, 0, 1};
   info_msg_.r = {1, 0, 0, 0, 1, 0, 0, 0, 1};

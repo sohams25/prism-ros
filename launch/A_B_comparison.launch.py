@@ -75,17 +75,21 @@ def _purge_stale_fastdds_shm():
 # --------------------------------------------------------------------------
 # Source node (shared by every operation, identical on both sides)
 # --------------------------------------------------------------------------
-def _source_node(name, image_topic, info_topic, video_path, intra_process):
+def _source_node(name, image_topic, info_topic, video_path, intra_process,
+                 extra_params=None):
+    params = {
+        'video_path': video_path,
+        'image_topic': image_topic,
+        'info_topic': info_topic,
+        'max_fps': 10.0,
+    }
+    if extra_params:
+        params.update(extra_params)
     return ComposableNode(
         package='prism_image_proc',
         plugin='prism::MediaStreamerNode',
         name=name,
-        parameters=[{
-            'video_path': video_path,
-            'image_topic': image_topic,
-            'info_topic': info_topic,
-            'max_fps': 10.0,
-        }],
+        parameters=[params],
         extra_arguments=[{'use_intra_process_comms': intra_process}],
     )
 
@@ -159,6 +163,35 @@ def _stock_colorconvert_nodes(video_path):
             output_topic='/legacy/image_processed',
             target_encoding='rgb8'),
     ]
+
+
+_RECTIFY_SOURCE_OVERRIDES = {
+    'focal_x': 1900.0,
+    'focal_y': 1900.0,
+    'distortion_d': [-0.30, 0.10, 0.0, 0.0, -0.02],
+}
+
+
+def _stock_rectify_nodes(video_path):
+    return [
+        _source_node('legacy_source',
+                     '/legacy/image_raw', '/legacy/camera_info',
+                     video_path, True,
+                     extra_params=_RECTIFY_SOURCE_OVERRIDES),
+        ComposableNode(
+            package='image_proc',
+            plugin='image_proc::RectifyNode',
+            name='legacy_rectify',
+            remappings=[
+                ('image', '/legacy/image_raw'),
+                ('camera_info', '/legacy/camera_info'),
+                ('image_rect', '/legacy/image_processed'),
+            ],
+            parameters=[{
+                'interpolation': 1,
+            }],
+        ),
+    ], []
 
 
 def _stock_chain_nodes(video_path):
@@ -306,6 +339,30 @@ def _accel_colorconvert_node(video_path):
     ]
 
 
+def _accel_rectify_node(video_path):
+    return [
+        _source_node('accel_source',
+                     '/accelerated/image_raw', '/accelerated/camera_info',
+                     video_path, True,
+                     extra_params=_RECTIFY_SOURCE_OVERRIDES),
+        ComposableNode(
+            package='prism_image_proc',
+            plugin='prism::RectifyNode',
+            name='accel_rectify',
+            parameters=[{
+                'input_topic': '/accelerated/image_raw',
+                'output_topic': '/accelerated/image_processed',
+                'action': 'rectify',
+                'source_width': 3840,
+                'source_height': 2160,
+                'camera_info_input_topic': '/accelerated/camera_info',
+                'camera_info_output_topic': '/accelerated/image_processed/camera_info',
+            }],
+            extra_arguments=[{'use_intra_process_comms': True}],
+        ),
+    ]
+
+
 def _accel_chain_node(video_path):
     return [
         _source_node('accel_source',
@@ -341,6 +398,7 @@ _STOCK_DISPATCH = {
     'resize':       _stock_resize_nodes,
     'crop':         _stock_crop_nodes,
     'colorconvert': _stock_colorconvert_nodes,
+    'rectify':      _stock_rectify_nodes,
     'chain':        _stock_chain_nodes,
 }
 
@@ -348,6 +406,7 @@ _ACCEL_DISPATCH = {
     'resize':       _accel_resize_node,
     'crop':         _accel_crop_node,
     'colorconvert': _accel_colorconvert_node,
+    'rectify':      _accel_rectify_node,
     'chain':        _accel_chain_node,
 }
 

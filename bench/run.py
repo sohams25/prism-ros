@@ -3,7 +3,7 @@
 bench/run.py — capture one A/B operation.
 
 Usage:
-  python3 bench/run.py --operation {resize|crop|colorconvert|chain} \
+  python3 bench/run.py --operation {resize|crop|colorconvert|rectify|chain} \
                        --video /path/to/4k.mp4 \
                        --duration 120 \
                        --output-dir bench/results/
@@ -229,7 +229,8 @@ def prism_commit_sha():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--operation', required=True,
-                    choices=['resize', 'crop', 'colorconvert', 'chain'])
+                    choices=['resize', 'crop', 'colorconvert', 'rectify',
+                             'chain'])
     ap.add_argument('--video', required=True)
     ap.add_argument('--duration', type=float, default=120.0,
                     help='capture duration in seconds (excludes warmup)')

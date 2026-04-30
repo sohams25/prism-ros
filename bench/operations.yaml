@@ -65,6 +65,28 @@ colorconvert:
     encoding. Fairest available approximation; not an official
     reference.
 
+rectify:
+  prism_params:
+    action: rectify
+  stock_plugin: image_proc::RectifyNode
+  stock_params: {}
+  source_overrides:
+    # Fisheye + radial-tangential distortion baked into both sides' source.
+    # Same intrinsics as the F2 E2.2 cv::remap microbenchmark so end-to-end
+    # numbers stay comparable to the kernel baseline.
+    focal_x: 1900.0
+    focal_y: 1900.0
+    distortion_d: [-0.30, 0.10, 0.0, 0.0, -0.02]
+  notes: >
+    Direct one-to-one match against image_proc::RectifyNode. Both sides
+    consume the same CameraInfo (focal_x/y=1900, plumb_bob D=[-0.30,
+    0.10, 0, 0, -0.02]) so the cv::remap work is identical; the latency
+    delta reflects intra-process composition + DDS round-trip elimination,
+    not kernel speed. Rectify always runs CPU-side on Prism by design —
+    see CLAUDE.md "CPU/GPU compartmentalization" and bench/experiments
+    /results/F2_E2.1_probe.md for why no hardware rectify backend exists
+    on Prism's segment.
+
 chain:
   prism_params:
     action: crop,resize,colorconvert
