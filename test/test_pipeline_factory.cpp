@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <gst/gst.h>
 
+#include <rclcpp/logging.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
 #include "prism_image_proc/pipeline_factory.hpp"
@@ -258,6 +259,163 @@ TEST(PipelineFactoryBuild, SingleResizeOnCpu)
   EXPECT_NE(pipeline.find("appsink"),     std::string::npos);
   EXPECT_NE(pipeline.find("width=640"),   std::string::npos);
   EXPECT_NE(pipeline.find("height=480"),  std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// CameraInfo transform edge cases
+// ---------------------------------------------------------------------------
+
+TEST(ResizeCameraInfoTransform, ScalesStereoProjectionTx)
+{
+  // A rectified stereo right camera carries Tx = -fx * baseline in P[3].
+  // After a resize, Tx must scale with fx (by sx) or disparity->depth breaks.
+  PipelineConfig c;
+  c.action = "resize";
+  c.source_width = 1280;
+  c.source_height = 720;
+  c.target_width = 640;   // sx = 0.5
+  c.target_height = 360;  // sy = 0.5
+
+  PipelineFactory factory(cpu_platform(), c);
+  auto transforms = factory.camera_info_transforms();
+  ASSERT_EQ(transforms.size(), 1u);
+
+  CameraInfo info = make_info(1280, 720, 1000.0, 1000.0, 640.0, 360.0);
+  info.p[3] = -1000.0 * 0.12;  // -fx * baseline(0.12 m) = -120.0
+  info.p[7] = 0.0;
+  apply(transforms, info, c);
+
+  EXPECT_DOUBLE_EQ(info.p[0], 500.0);    // fx scaled
+  EXPECT_DOUBLE_EQ(info.p[3], -60.0);    // Tx scaled by sx (0.5) -> -60.0
+  EXPECT_DOUBLE_EQ(info.p[7], 0.0);      // Ty stays 0
+}
+
+TEST(FlipCameraInfoTransform, VerticalMirrorsPrincipalY)
+{
+  PipelineConfig c;
+  c.action = "flip";
+  c.flip_method = "vertical";
+  c.source_width = 640;
+  c.source_height = 480;
+
+  PipelineFactory factory(cpu_platform(), c);
+  auto transforms = factory.camera_info_transforms();
+  ASSERT_EQ(transforms.size(), 1u);
+
+  // cy=180 is deliberately off-center (center is 240) so the mirror is
+  // distinguishable from the original — a center value would pass even if the
+  // transform touched the wrong element.
+  CameraInfo info = make_info(640, 480, 500.0, 500.0, 300.0, 180.0);
+  apply(transforms, info, c);
+
+  EXPECT_DOUBLE_EQ(info.k[5], 480.0 - 180.0);  // cy mirrored in K -> 300
+  EXPECT_DOUBLE_EQ(info.p[6], 480.0 - 180.0);  // cy mirrored in P -> 300
+  EXPECT_DOUBLE_EQ(info.p[5], 500.0);          // fy (P[5]) must NOT change
+  EXPECT_DOUBLE_EQ(info.k[2], 300.0);          // cx unchanged
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline build: per-backend fragments and validation throw paths
+// ---------------------------------------------------------------------------
+
+TEST(PipelineFactoryBuild, JetsonResizeUsesNvElement)
+{
+  // On a host without nvvideoconvert (e.g. CI / desktop) the Jetson backend
+  // falls back to the legacy nvvidconv adapter path. Either way the fragment
+  // must route through an nv* element, never the plain CPU videoscale.
+  PipelineConfig c;
+  c.action = "resize";
+  c.source_width = 3840;
+  c.source_height = 2160;
+  c.target_width = 640;
+  c.target_height = 480;
+
+  PlatformInfo p;
+  p.platform = HardwarePlatform::NVIDIA_JETSON;
+  PipelineFactory factory(p, c);
+  const std::string pipeline = factory.build();
+
+  const bool has_nv =
+    pipeline.find("nvvideoconvert") != std::string::npos ||
+    pipeline.find("nvvidconv") != std::string::npos;
+  EXPECT_TRUE(has_nv) << pipeline;
+  EXPECT_NE(pipeline.find("width=640"), std::string::npos);
+}
+
+TEST(PipelineFactoryBuild, ColorconvertRejectsUnsupportedEncoding)
+{
+  PipelineConfig c;
+  c.action = "colorconvert";
+  c.target_encoding = "yuv422";  // not in the bgr8/rgb8/mono8 allow-list
+  PipelineFactory factory(cpu_platform(), c);
+  EXPECT_THROW(factory.build(), std::invalid_argument);
+}
+
+TEST(PipelineFactoryBuild, ColorconvertAcceptsMono8)
+{
+  PipelineConfig c;
+  c.action = "colorconvert";
+  c.target_encoding = "mono8";
+  PipelineFactory factory(cpu_platform(), c);
+  const std::string pipeline = factory.build();
+  EXPECT_NE(pipeline.find("GRAY8"), std::string::npos) << pipeline;
+}
+
+TEST(PipelineFactoryBuild, CropRejectsNonPositiveDimensions)
+{
+  PipelineConfig c;
+  c.action = "crop";
+  c.source_width = 1920;
+  c.source_height = 1080;
+  c.crop_x = 0;
+  c.crop_y = 0;
+  c.crop_width = 0;   // invalid
+  c.crop_height = 0;  // invalid
+  PipelineFactory factory(cpu_platform(), c);
+  EXPECT_THROW(factory.build(), std::invalid_argument);
+}
+
+TEST(PipelineFactoryBuild, CropRejectsOutOfBoundsRect)
+{
+  PipelineConfig c;
+  c.action = "crop";
+  c.source_width = 640;
+  c.source_height = 480;
+  c.crop_x = 400;
+  c.crop_y = 0;
+  c.crop_width = 400;  // 400 + 400 = 800 > 640 source width
+  c.crop_height = 200;
+  PipelineFactory factory(cpu_platform(), c);
+  EXPECT_THROW(factory.build(), std::invalid_argument);
+}
+
+TEST(FlipFragment, RejectsUnknownMethod)
+{
+  PipelineConfig c;
+  c.action = "flip";
+  c.flip_method = "diagonal";  // not none/horizontal/vertical
+  PipelineFactory factory(cpu_platform(), c);
+  EXPECT_THROW(factory.build(), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// Platform validation
+// ---------------------------------------------------------------------------
+
+TEST(ValidatePlatform, CpuFallbackPassesThrough)
+{
+  PlatformInfo p;
+  p.platform = HardwarePlatform::CPU_FALLBACK;
+  const auto out = prism::validate_platform(p, rclcpp::get_logger("test"));
+  EXPECT_EQ(out.platform, HardwarePlatform::CPU_FALLBACK);
+}
+
+TEST(FactoryExists, ReportsKnownAndUnknownElements)
+{
+  // videoconvert ships with gstreamer-plugins-base (a hard dependency), so it
+  // is always present; a nonsense element name must report absent.
+  EXPECT_TRUE(prism::factory_exists("videoconvert"));
+  EXPECT_FALSE(prism::factory_exists("definitely_not_a_real_gst_element_xyz"));
 }
 
 int main(int argc, char ** argv)
