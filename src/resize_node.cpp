@@ -31,7 +31,7 @@ rclcpp::NodeOptions with_default_action(
 }  // namespace
 
 ResizeNode::ResizeNode(const rclcpp::NodeOptions & options)
-: ImageProcNode(with_default_action(options, "resize"))
+: ImageProcNode(with_default_action(options, "resize"), "resize_node")
 {
 }
 

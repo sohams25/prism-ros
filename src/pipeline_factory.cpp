@@ -12,6 +12,16 @@
 namespace prism
 {
 
+bool factory_exists(const char * element_name)
+{
+  GstElementFactory * factory = gst_element_factory_find(element_name);
+  if (factory) {
+    gst_object_unref(factory);
+    return true;
+  }
+  return false;
+}
+
 PlatformInfo validate_platform(
   const PlatformInfo & detected, const rclcpp::Logger & logger)
 {
@@ -23,7 +33,7 @@ PlatformInfo validate_platform(
   switch (detected.platform) {
     case HardwarePlatform::INTEL_VAAPI:
       // Try the newer va plugin first, fall back to legacy vaapi plugin
-      if (gst_element_factory_find("vapostproc")) {
+      if (factory_exists("vapostproc")) {
         RCLCPP_INFO(logger, "Plugin validated: 'vapostproc' found (GStreamer va plugin)");
         return detected;
       }
@@ -32,11 +42,11 @@ PlatformInfo validate_platform(
     case HardwarePlatform::NVIDIA_JETSON:
       // Prefer the modern element; fall back to the legacy nvvidconv
       // shipped on Tegra L4T images that pre-date nvvideoconvert.
-      if (gst_element_factory_find("nvvideoconvert")) {
+      if (factory_exists("nvvideoconvert")) {
         RCLCPP_INFO(logger, "Plugin validated: 'nvvideoconvert' found");
         return detected;
       }
-      if (gst_element_factory_find("nvvidconv")) {
+      if (factory_exists("nvvidconv")) {
         RCLCPP_INFO(
           logger,
           "Plugin validated: 'nvvidconv' (legacy) found "
@@ -49,9 +59,7 @@ PlatformInfo validate_platform(
       return detected;
   }
 
-  GstElementFactory * factory = gst_element_factory_find(required_element);
-  if (factory) {
-    gst_object_unref(factory);
+  if (factory_exists(required_element)) {
     RCLCPP_INFO(logger, "Plugin validated: '%s' found in registry", required_element);
     return detected;
   }
@@ -85,7 +93,7 @@ std::string resize_caps(const PipelineConfig & c)
 std::string resize_vaapi(const PipelineConfig & c)
 {
   // GStreamer 1.22+ with va plugin: full GL bridge, no CPU conversion.
-  if (gst_element_factory_find("vapostproc")) {
+  if (factory_exists("vapostproc")) {
     std::ostringstream ss;
     ss << "glupload ! glcolorconvert"
        << " ! video/x-raw(memory:GLMemory),format=RGBA"
@@ -109,7 +117,7 @@ std::string resize_vaapi(const PipelineConfig & c)
 std::string resize_jetson(const PipelineConfig & c)
 {
   std::ostringstream ss;
-  if (gst_element_factory_find("nvvideoconvert")) {
+  if (factory_exists("nvvideoconvert")) {
     ss << "nvvideoconvert compute-hw=1 nvbuf-memory-type=2"
        << " ! video/x-raw(memory:NVMM),format=NV12"
        << " ! nvvideoconvert compute-hw=1 nvbuf-memory-type=0 interpolation-method=1"
@@ -163,8 +171,12 @@ void resize_camera_info(
   info.k[0] *= sx;  info.k[2] *= sx;
   info.k[4] *= sy;  info.k[5] *= sy;
 
-  info.p[0] *= sx;  info.p[2] *= sx;
-  info.p[5] *= sy;  info.p[6] *= sy;
+  // P is the 3x4 projection matrix [fx 0 cx Tx; 0 fy cy Ty; 0 0 1 0].
+  // Scale fx/cx and the horizontal baseline term Tx by sx; fy/cy and Ty by sy.
+  // Tx (= -fx*baseline for a rectified stereo right camera) tracks fx, so it
+  // must scale too — omitting it silently corrupts stereo disparity-to-depth.
+  info.p[0] *= sx;  info.p[2] *= sx;  info.p[3] *= sx;
+  info.p[5] *= sy;  info.p[6] *= sy;  info.p[7] *= sy;
 
   info.roi.x_offset = static_cast<uint32_t>(info.roi.x_offset * sx);
   info.roi.y_offset = static_cast<uint32_t>(info.roi.y_offset * sy);
@@ -199,7 +211,7 @@ std::string colorconvert_fragment(const PlatformInfo & p, const PipelineConfig &
   const char * element = nullptr;
   switch (p.platform) {
     case HardwarePlatform::NVIDIA_JETSON:
-      if (gst_element_factory_find("nvvideoconvert")) {
+      if (factory_exists("nvvideoconvert")) {
         element = "nvvideoconvert";  // emits BGR/RGB/GRAY8 directly
       } else {
         // Legacy nvvidconv supports BGRx, RGBA, GRAY8 — not BGR/RGB.
@@ -219,7 +231,7 @@ std::string colorconvert_fragment(const PlatformInfo & p, const PipelineConfig &
       }
       break;
     case HardwarePlatform::INTEL_VAAPI:
-      element = gst_element_factory_find("vapostproc") ? "vapostproc" : "videoconvert";
+      element = factory_exists("vapostproc") ? "vapostproc" : "videoconvert";
       break;
     case HardwarePlatform::CPU_FALLBACK:  element = "videoconvert"; break;
   }
@@ -249,7 +261,7 @@ std::string crop_fragment(const PlatformInfo & p, const PipelineConfig & c)
   std::ostringstream ss;
   switch (p.platform) {
     case HardwarePlatform::NVIDIA_JETSON:
-      if (gst_element_factory_find("nvvideoconvert")) {
+      if (factory_exists("nvvideoconvert")) {
         // nvvideoconvert supports src-* properties for input-side cropping.
         ss << "nvvideoconvert"
            << " src-x=" << c.crop_x
@@ -343,7 +355,7 @@ std::string flip_fragment(const PlatformInfo & p, const PipelineConfig & c)
       // flip-method enum: 4=horizontal-flip, 6=vertical-flip on both
       // nvvideoconvert and the legacy nvvidconv element.
       const int method = c.flip_method == "horizontal" ? 4 : 6;
-      if (gst_element_factory_find("nvvideoconvert")) {
+      if (factory_exists("nvvideoconvert")) {
         return c.flip_method == "horizontal"
           ? "nvvideoconvert flip-method=4"
           : "nvvideoconvert flip-method=6";
@@ -358,7 +370,7 @@ std::string flip_fragment(const PlatformInfo & p, const PipelineConfig & c)
     }
 
     case HardwarePlatform::INTEL_VAAPI:
-      if (gst_element_factory_find("vapostproc")) {
+      if (factory_exists("vapostproc")) {
         return c.flip_method == "horizontal"
           ? "vapostproc video-direction=horiz"
           : "vapostproc video-direction=vert";
@@ -380,8 +392,10 @@ void flip_camera_info(
     info.k[2] = static_cast<double>(info.width) - info.k[2];
     info.p[2] = static_cast<double>(info.width) - info.p[2];
   } else if (c.flip_method == "vertical") {
+    // Mirror the vertical principal point cy: K[5] and P[6]. (P[5] is fy, not
+    // cy — mutating it would corrupt the focal length.)
     info.k[5] = static_cast<double>(info.height) - info.k[5];
-    info.p[5] = static_cast<double>(info.height) - info.p[5];
+    info.p[6] = static_cast<double>(info.height) - info.p[6];
   }
   // 'none': no-op.
 }

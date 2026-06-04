@@ -1,12 +1,16 @@
 #include "prism_image_proc/image_proc_node.hpp"
 #include "prism_image_proc/pipeline_factory.hpp"
 
+#include <rcl_interfaces/msg/floating_point_range.hpp>
+#include <rcl_interfaces/msg/integer_range.hpp>
+#include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <gst/video/video.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <unordered_set>
 
@@ -16,24 +20,28 @@ namespace prism
 {
 
 ImageProcNode::ImageProcNode(const rclcpp::NodeOptions & options)
-: Node("resize_node", rclcpp::NodeOptions(options).use_intra_process_comms(true))
+: ImageProcNode(options, "image_proc_node")
+{
+}
+
+ImageProcNode::ImageProcNode(
+  const rclcpp::NodeOptions & options, const std::string & node_name)
+: Node(node_name, rclcpp::NodeOptions(options).use_intra_process_comms(true))
 {
   gst_init(nullptr, nullptr);
 
   declare_parameters();
   detect_hardware();
 
-  // Determine if a WORKING GPU accelerator is available.
-  // On GStreamer 1.20, vaapipostproc exists but has a chroma loss bug —
-  // only vapostproc (GStreamer 1.22+) or nvvideoconvert (Jetson) actually work.
-  bool has_working_gpu =
-    (platform_info_.platform == HardwarePlatform::NVIDIA_JETSON) ||
-    (platform_info_.platform == HardwarePlatform::INTEL_VAAPI &&
-     gst_element_factory_find("vapostproc"));
+  const bool has_working_gpu = gpu_path_available();
 
   if (has_working_gpu) {
     build_pipeline();
-    launch_pipeline();
+    if (!launch_pipeline()) {
+      RCLCPP_WARN(get_logger(),
+        "GPU pipeline launch failed at startup — falling back to direct mode.");
+      launch_direct();
+    }
   } else {
     launch_direct();
   }
@@ -49,30 +57,76 @@ ImageProcNode::~ImageProcNode()
   shutdown_pipeline();
 }
 
+namespace
+{
+
+// Build a ParameterDescriptor with an inclusive integer range so out-of-range
+// values are rejected by rcl before reaching our callback.
+rcl_interfaces::msg::ParameterDescriptor int_range_desc(
+  const std::string & description, int64_t lo, int64_t hi)
+{
+  rcl_interfaces::msg::ParameterDescriptor d;
+  d.description = description;
+  rcl_interfaces::msg::IntegerRange r;
+  r.from_value = lo;
+  r.to_value = hi;
+  r.step = 1;
+  d.integer_range.push_back(r);
+  return d;
+}
+
+rcl_interfaces::msg::ParameterDescriptor dbl_range_desc(
+  const std::string & description, double lo, double hi)
+{
+  rcl_interfaces::msg::ParameterDescriptor d;
+  d.description = description;
+  rcl_interfaces::msg::FloatingPointRange r;
+  r.from_value = lo;
+  r.to_value = hi;
+  r.step = 0.0;  // continuous
+  d.floating_point_range.push_back(r);
+  return d;
+}
+
+constexpr int64_t kMaxPixelDim = 16384;  // generous upper bound (2x 8K)
+
+}  // namespace
+
 void ImageProcNode::declare_parameters()
 {
   declare_parameter("input_topic", "/camera/image_raw");
   declare_parameter("output_topic", "/camera/image_processed");
   declare_parameter("action", "resize");
-  declare_parameter("source_width", 3840);
-  declare_parameter("source_height", 2160);
+  declare_parameter("source_width", 3840,
+    int_range_desc("Source frame width (px); fixes the GPU appsrc caps", 1, kMaxPixelDim));
+  declare_parameter("source_height", 2160,
+    int_range_desc("Source frame height (px); fixes the GPU appsrc caps", 1, kMaxPixelDim));
   declare_parameter("use_scale", false);
-  declare_parameter("scale_height", 1.0);
-  declare_parameter("scale_width", 1.0);
-  declare_parameter("height", 480);
-  declare_parameter("width", 640);
+  declare_parameter("scale_height", 1.0,
+    dbl_range_desc("Vertical scale factor when use_scale=true", 0.001, 100.0));
+  declare_parameter("scale_width", 1.0,
+    dbl_range_desc("Horizontal scale factor when use_scale=true", 0.001, 100.0));
+  declare_parameter("height", 480,
+    int_range_desc("Output height (px) when use_scale=false", 1, kMaxPixelDim));
+  declare_parameter("width", 640,
+    int_range_desc("Output width (px) when use_scale=false", 1, kMaxPixelDim));
   declare_parameter("publish_camera_info", true);
   declare_parameter("camera_info_input_topic", "");
   declare_parameter("camera_info_output_topic", "");
   declare_parameter("input_transport", "raw");
+  declare_parameter("reliable_qos", false);
 
   // Action-specific parameters (only read when the corresponding action is
   // present in the action chain).
   declare_parameter("target_encoding", "bgr8");
-  declare_parameter("crop_x", 0);
-  declare_parameter("crop_y", 0);
-  declare_parameter("crop_width", 0);
-  declare_parameter("crop_height", 0);
+  declare_parameter("crop_x", 0,
+    int_range_desc("Crop left offset (px) into the source", 0, kMaxPixelDim));
+  declare_parameter("crop_y", 0,
+    int_range_desc("Crop top offset (px) into the source", 0, kMaxPixelDim));
+  declare_parameter("crop_width", 0,
+    int_range_desc("Crop width (px); must be >0 when 'crop' is in the chain", 0, kMaxPixelDim));
+  declare_parameter("crop_height", 0,
+    int_range_desc("Crop height (px); must be >0 when 'crop' is in the chain", 0, kMaxPixelDim));
   declare_parameter("flip_method", "none");
 }
 
@@ -96,6 +150,19 @@ std::string derive_camera_info_topic(const std::string & image_topic)
 
 }  // namespace
 
+rclcpp::QoS ImageProcNode::image_qos() const
+{
+  // Image and CameraInfo streams default to SensorDataQoS (BEST_EFFORT,
+  // KEEP_LAST depth 5) so the node interoperates with the standard camera
+  // drivers, which publish sensor data BEST_EFFORT. A RELIABLE subscription
+  // would silently fail to connect to those publishers. Set reliable_qos:=true
+  // for lossless delivery against a RELIABLE source (e.g. a file/replay node).
+  if (get_parameter("reliable_qos").as_bool()) {
+    return rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+  }
+  return rclcpp::SensorDataQoS();
+}
+
 PipelineConfig ImageProcNode::load_config_from_params() const
 {
   PipelineConfig c;
@@ -107,10 +174,21 @@ PipelineConfig ImageProcNode::load_config_from_params() const
 
   const bool use_scale = get_parameter("use_scale").as_bool();
   if (use_scale) {
-    c.target_width  = static_cast<int>(
-      c.source_width  * get_parameter("scale_width").as_double());
-    c.target_height = static_cast<int>(
-      c.source_height * get_parameter("scale_height").as_double());
+    // Compute scaled dimensions in double and clamp to a sane pixel range
+    // before narrowing. An unbounded scale factor would otherwise overflow
+    // the double->int conversion (undefined behavior) and yield negative or
+    // garbage target dimensions that crash cv::resize / GStreamer caps.
+    constexpr double kMinDim = 1.0;
+    constexpr double kMaxDim = 16384.0;  // generous: 2x 8K
+    const double tw = c.source_width  * get_parameter("scale_width").as_double();
+    const double th = c.source_height * get_parameter("scale_height").as_double();
+    if (tw > kMaxDim || th > kMaxDim) {
+      RCLCPP_WARN(get_logger(),
+        "Scaled target %.0fx%.0f exceeds the %.0f-px clamp; clamping. "
+        "Reduce scale_width/scale_height.", tw, th, kMaxDim);
+    }
+    c.target_width  = static_cast<int>(std::clamp(tw, kMinDim, kMaxDim));
+    c.target_height = static_cast<int>(std::clamp(th, kMinDim, kMaxDim));
   } else {
     c.target_width  = get_parameter("width").as_int();
     c.target_height = get_parameter("height").as_int();
@@ -138,11 +216,11 @@ void ImageProcNode::setup_camera_info_io(
   if (output_info_topic.empty()) { output_info_topic = derive_camera_info_topic(image_output_topic); }
 
   info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
-    input_info_topic, 10,
+    input_info_topic, image_qos(),
     [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {
       on_camera_info(std::move(msg));
     });
-  info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(output_info_topic, 10);
+  info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(output_info_topic, image_qos());
 
   RCLCPP_INFO(get_logger(),
     "CameraInfo: subscribing %s, publishing %s "
@@ -176,6 +254,7 @@ rcl_interfaces::msg::SetParametersResult ImageProcNode::on_set_parameters(
     "camera_info_input_topic", "camera_info_output_topic",
     "publish_camera_info",
     "input_transport",
+    "reliable_qos",
     "source_width", "source_height",
   };
 
@@ -208,16 +287,72 @@ rcl_interfaces::msg::SetParametersResult ImageProcNode::on_set_parameters(
     }
   }
 
-  if (needs_rebuild && !rebuild_timer_) {
-    rebuild_timer_ = create_wall_timer(
-      std::chrono::milliseconds(1),
-      [this]() {
-        if (rebuild_timer_) { rebuild_timer_->cancel(); }
-        rebuild_timer_.reset();
-        rebuild_from_params();
-      });
+  // Dry-run the full proposed configuration through the pipeline factory so
+  // invalid *combinations* — an unsupported target_encoding, a bad flip_method,
+  // or a crop action with non-positive / out-of-bounds crop dimensions — are
+  // rejected here (successful=false, with the factory's reason) instead of
+  // being accepted now and then throwing an uncaught std::invalid_argument
+  // from the deferred rebuild timer, which would terminate the node.
+  if (needs_rebuild) {
+    PipelineConfig trial = load_config_from_params();
+    // Track the inputs that determine the output dimensions so we can recompute
+    // target_width/height exactly the way load_config_from_params would, but
+    // against the *proposed* values (it only sees the currently-committed ones).
+    bool use_scale = get_parameter("use_scale").as_bool();
+    double scale_w = get_parameter("scale_width").as_double();
+    double scale_h = get_parameter("scale_height").as_double();
+    int abs_w = get_parameter("width").as_int();
+    int abs_h = get_parameter("height").as_int();
+    for (const auto & p : params) {
+      const auto & n = p.get_name();
+      if (n == "action")              { trial.action = p.as_string(); }
+      else if (n == "target_encoding") { trial.target_encoding = p.as_string(); }
+      else if (n == "flip_method")     { trial.flip_method = p.as_string(); }
+      else if (n == "crop_x")          { trial.crop_x = static_cast<int>(p.as_int()); }
+      else if (n == "crop_y")          { trial.crop_y = static_cast<int>(p.as_int()); }
+      else if (n == "crop_width")      { trial.crop_width = static_cast<int>(p.as_int()); }
+      else if (n == "crop_height")     { trial.crop_height = static_cast<int>(p.as_int()); }
+      else if (n == "source_width")    { trial.source_width = static_cast<int>(p.as_int()); }
+      else if (n == "source_height")   { trial.source_height = static_cast<int>(p.as_int()); }
+      else if (n == "use_scale")       { use_scale = p.as_bool(); }
+      else if (n == "scale_width")     { scale_w = p.as_double(); }
+      else if (n == "scale_height")    { scale_h = p.as_double(); }
+      else if (n == "width")           { abs_w = static_cast<int>(p.as_int()); }
+      else if (n == "height")          { abs_h = static_cast<int>(p.as_int()); }
+    }
+    if (use_scale) {
+      trial.target_width  = static_cast<int>(trial.source_width  * scale_w);
+      trial.target_height = static_cast<int>(trial.source_height * scale_h);
+    } else {
+      trial.target_width  = abs_w;
+      trial.target_height = abs_h;
+    }
+    try {
+      PipelineFactory trial_factory(platform_info_, trial);
+      (void)trial_factory.build();
+    } catch (const std::exception & e) {
+      result.successful = false;
+      result.reason = e.what();
+      return result;
+    }
+  }
+
+  if (needs_rebuild) {
+    schedule_rebuild();
   }
   return result;
+}
+
+void ImageProcNode::schedule_rebuild()
+{
+  if (rebuild_timer_) { return; }  // a rebuild is already pending
+  rebuild_timer_ = create_wall_timer(
+    std::chrono::milliseconds(1),
+    [this]() {
+      if (rebuild_timer_) { rebuild_timer_->cancel(); }
+      rebuild_timer_.reset();
+      rebuild_from_params();
+    });
 }
 
 void ImageProcNode::rebuild_from_params()
@@ -234,17 +369,45 @@ void ImageProcNode::rebuild_from_params()
   info_pub_.reset();
   info_transforms_.clear();
 
-  const bool has_working_gpu =
-    (platform_info_.platform == HardwarePlatform::NVIDIA_JETSON) ||
-    (platform_info_.platform == HardwarePlatform::INTEL_VAAPI &&
-     gst_element_factory_find("vapostproc"));
+  const bool has_working_gpu = gpu_path_available();
   direct_mode_ = !has_working_gpu;
 
-  if (has_working_gpu) {
-    build_pipeline();
-    launch_pipeline();
-  } else {
-    launch_direct();
+  // on_set_parameters dry-runs the pipeline build, so a rebuild reaching this
+  // point is expected to succeed. The try/catch is a backstop: a build/launch
+  // exception here runs on the one-shot timer thread, where an escape would
+  // terminate the executor. Degrade to direct mode (which constructs no
+  // GStreamer fragment and so cannot re-trigger per-action validation) so the
+  // node stays alive and observable.
+  try {
+    if (has_working_gpu) {
+      build_pipeline();
+      if (!launch_pipeline()) {
+        RCLCPP_WARN(get_logger(),
+          "GPU pipeline launch failed on rebuild — falling back to direct mode.");
+        direct_mode_ = true;
+        launch_direct();
+      }
+    } else {
+      launch_direct();
+    }
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_logger(),
+      "Pipeline rebuild failed (%s) — falling back to direct mode.", e.what());
+    image_sub_.reset();
+    it_sub_.shutdown();
+    shutdown_pipeline();
+    output_pub_.reset();
+    info_pub_.reset();
+    info_sub_.reset();
+    info_transforms_.clear();
+    direct_mode_ = true;
+    try {
+      launch_direct();
+    } catch (const std::exception & e2) {
+      RCLCPP_FATAL(get_logger(),
+        "Direct-mode fallback also failed (%s); node is idle until "
+        "reconfigured.", e2.what());
+    }
   }
 }
 
@@ -292,6 +455,15 @@ void ImageProcNode::detect_hardware()
   platform_info_ = validate_platform(platform_info_, get_logger());
 }
 
+bool ImageProcNode::gpu_path_available() const
+{
+  // On GStreamer 1.20 vaapipostproc exists but has a chroma-loss bug; only
+  // vapostproc (1.22+) or the Jetson NVMM path are treated as working GPUs.
+  return (platform_info_.platform == HardwarePlatform::NVIDIA_JETSON) ||
+         (platform_info_.platform == HardwarePlatform::INTEL_VAAPI &&
+          factory_exists("vapostproc"));
+}
+
 void ImageProcNode::build_pipeline()
 {
   config_ = load_config_from_params();
@@ -309,7 +481,12 @@ void ImageProcNode::build_pipeline()
 // GStreamer execution: appsrc (input) + appsink (output)
 // ---------------------------------------------------------------------------
 
-void ImageProcNode::launch_pipeline()
+// Returns true if the GStreamer pipeline started and ROS I/O is wired.
+// Returns false (after fully releasing any partial GStreamer/ROS state) if the
+// pipeline could not be parsed, the appsrc/appsink could not be found, or the
+// state change to PLAYING failed — letting the caller fall back to direct mode
+// instead of leaving a live-but-silent node.
+bool ImageProcNode::launch_pipeline()
 {
   GError * error = nullptr;
   pipeline_ = gst_parse_launch(pipeline_string_.c_str(), &error);
@@ -317,8 +494,13 @@ void ImageProcNode::launch_pipeline()
   if (error) {
     RCLCPP_ERROR(get_logger(), "Pipeline parse error: %s", error->message);
     g_error_free(error);
+    // gst_parse_launch may return a partially-built pipeline alongside the
+    // error; unref it before discarding so it (and its children) are freed.
+    if (pipeline_) {
+      gst_object_unref(pipeline_);
+    }
     pipeline_ = nullptr;
-    return;
+    return false;
   }
 
   // Get appsrc (input)
@@ -327,7 +509,7 @@ void ImageProcNode::launch_pipeline()
     RCLCPP_ERROR(get_logger(), "Failed to find appsrc 'ros_ingest'");
     gst_object_unref(pipeline_);
     pipeline_ = nullptr;
-    return;
+    return false;
   }
 
   g_object_set(G_OBJECT(appsrc_),
@@ -346,36 +528,41 @@ void ImageProcNode::launch_pipeline()
     appsrc_ = nullptr;
     gst_object_unref(pipeline_);
     pipeline_ = nullptr;
-    return;
+    return false;
   }
 
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, nullptr);
   g_signal_connect(appsink_, "new-sample", G_CALLBACK(on_new_sample), this);
 
-  // Create the output publisher
-  auto output_topic = get_parameter("output_topic").as_string();
-  output_pub_ = create_publisher<sensor_msgs::msg::Image>(output_topic, 10);
-
-  setup_camera_info_io(config_.input_topic, config_.output_topic);
-
+  // Start the pipeline BEFORE wiring ROS publishers/subscribers. A state-change
+  // failure then happens with no ROS endpoints created, so the failure path is
+  // a clean GStreamer-only teardown and the caller can fall back cleanly.
   GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
   if (ret == GST_STATE_CHANGE_FAILURE) {
     RCLCPP_ERROR(get_logger(), "Failed to set pipeline to PLAYING");
+    gst_element_set_state(pipeline_, GST_STATE_NULL);
     gst_object_unref(appsink_);
     appsink_ = nullptr;
     gst_object_unref(appsrc_);
     appsrc_ = nullptr;
     gst_object_unref(pipeline_);
     pipeline_ = nullptr;
-    return;
+    return false;
   }
+
+  // Pipeline is live — now create the ROS output publisher, CameraInfo I/O,
+  // and the input subscription that feeds appsrc.
+  auto output_topic = get_parameter("output_topic").as_string();
+  output_pub_ = create_publisher<sensor_msgs::msg::Image>(output_topic, image_qos());
+
+  setup_camera_info_io(config_.input_topic, config_.output_topic);
 
   auto input_topic = get_parameter("input_topic").as_string();
   const auto transport = get_parameter("input_transport").as_string();
   if (transport == "raw") {
     // Fast path: UniquePtr intra-process zero-copy ingest.
     image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      input_topic, 10,
+      input_topic, image_qos(),
       [this](sensor_msgs::msg::Image::UniquePtr msg) {
         on_image(std::move(msg));
       });
@@ -390,7 +577,7 @@ void ImageProcNode::launch_pipeline()
         auto owned = std::make_unique<sensor_msgs::msg::Image>(*msg);
         on_image(std::move(owned));
       },
-      transport);
+      transport, image_qos().get_rmw_qos_profile());
   }
 
   RCLCPP_INFO(get_logger(),
@@ -399,6 +586,7 @@ void ImageProcNode::launch_pipeline()
     input_topic.c_str(), transport.c_str(), output_topic.c_str());
 
   bus_timer_ = create_wall_timer(100ms, std::bind(&ImageProcNode::poll_bus, this));
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +604,42 @@ void ImageProcNode::on_image(sensor_msgs::msg::Image::UniquePtr msg)
 {
   if (!appsrc_) { return; }
 
+  // The appsrc caps are fixed at video/x-raw,format=BGR with the source
+  // width/height (see PipelineFactory::source_element). Pushing a buffer
+  // whose encoding or byte layout disagrees with those caps either silently
+  // corrupts the output (wrong encoding, same size) or errors the whole
+  // pipeline (size mismatch). Validate at the boundary and drop loudly.
+  if (msg->encoding != "bgr8") {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Ingest expects bgr8 (appsrc caps are format=BGR); got '%s' — dropping frame",
+      msg->encoding.c_str());
+    return;
+  }
+  // The appsrc caps describe tightly-packed BGR (stride == width*3). Require an
+  // exact stride: a row-padded frame (step > width*3) would feed misaligned
+  // rows into the pipeline (corruption) or trip a buffer-size/caps mismatch.
+  const size_t expected_step = static_cast<size_t>(msg->width) * 3u;
+  const size_t expected_size = expected_step * msg->height;
+  if (msg->width == 0 || msg->height == 0 ||
+      msg->step != expected_step || msg->data.size() < expected_size)
+  {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Malformed or row-padded bgr8 frame (w=%u h=%u step=%u, expected step=%zu, "
+      "size=%zu) — dropping; the GPU appsrc caps require tightly-packed BGR rows",
+      msg->width, msg->height, msg->step, expected_step, msg->data.size());
+    return;
+  }
+  if (msg->width != static_cast<uint32_t>(config_.source_width) ||
+      msg->height != static_cast<uint32_t>(config_.source_height))
+  {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Frame %ux%u does not match configured source_width/source_height "
+      "(%dx%d); the GPU pipeline caps are fixed — dropping. Set source_width/"
+      "source_height to the camera resolution.",
+      msg->width, msg->height, config_.source_width, config_.source_height);
+    return;
+  }
+
   // Extract the ROS timestamp BEFORE releasing ownership
   GstClockTime pts =
     static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL +
@@ -429,6 +653,15 @@ void ImageProcNode::on_image(sensor_msgs::msg::Image::UniquePtr msg)
     static_cast<GstMemoryFlags>(0),
     data, size, 0, size,
     raw_msg, destroy_ros_image);
+
+  if (!buffer) {
+    // Wrap failed — no GstBuffer took ownership, so free the released payload
+    // ourselves to avoid leaking it, and skip the null deref of GST_BUFFER_PTS.
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Failed to wrap frame into a GstBuffer — dropping frame");
+    destroy_ros_image(raw_msg);
+    return;
+  }
 
   // Tunnel the ROS timestamp through GStreamer as the buffer PTS
   GST_BUFFER_PTS(buffer) = pts;
@@ -521,38 +754,67 @@ GstFlowReturn ImageProcNode::on_new_sample(GstAppSink * sink, gpointer user_data
     cv::cvtColor(raw, out_mat, cv::COLOR_RGBA2RGB);
     out_encoding = "rgb8";
     out_channels = 3;
-  } else if (fmt == GST_VIDEO_FORMAT_NV12) {
-    // Y plane + interleaved UV plane — assemble for OpenCV
-    cv::Mat nv12(h * 3 / 2, w, CV_8UC1);
-    auto * y_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
-    auto * uv_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
-    int ys = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-    int uvs = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
-    for (int r = 0; r < h; ++r)
-      std::memcpy(nv12.ptr(r), y_src + r * ys, w);
-    for (int r = 0; r < h / 2; ++r)
-      std::memcpy(nv12.ptr(h + r), uv_src + r * uvs, w);
-    cv::cvtColor(nv12, out_mat, cv::COLOR_YUV2BGR_NV12);
-    out_encoding = "bgr8";
-    out_channels = 3;
-  } else if (fmt == GST_VIDEO_FORMAT_I420 || fmt == GST_VIDEO_FORMAT_YV12) {
-    // 3 separate planes: Y, U, V
+  } else if (fmt == GST_VIDEO_FORMAT_NV12 ||
+             fmt == GST_VIDEO_FORMAT_I420 ||
+             fmt == GST_VIDEO_FORMAT_YV12) {
+    // Planar 4:2:0 formats require even width/height; odd dimensions would
+    // truncate a chroma row/column and (pre-fix) overran the assembly Mat.
+    // GStreamer caps negotiation enforces even dims for these formats, so an
+    // odd value here signals a malformed buffer — drop it loudly rather than
+    // read/write out of bounds.
+    if ((w & 1) || (h & 1)) {
+      RCLCPP_WARN_THROTTLE(self->get_logger(), *self->get_clock(), 2000,
+        "Planar YUV egress with odd dimensions %dx%d — skipping frame", w, h);
+      gst_video_frame_unmap(&frame);
+      gst_sample_unref(sample);
+      return GST_FLOW_OK;
+    }
+    const int cw = w / 2;  // chroma width
+    const int ch = h / 2;  // chroma height
+    // Assemble into the contiguous (h*3/2 x w) layout OpenCV's YUV2BGR
+    // conversions expect: Y (h rows of w), then the two 4:2:0 chroma planes
+    // packed back-to-back. Writing through a raw base pointer keeps every
+    // byte inside the h*3/2*w allocation (the previous ptr(row)-per-line
+    // packing wrote the V plane up to h/2 rows past the Mat — a heap
+    // overflow — and left half of each chroma row uninitialised).
     cv::Mat yuv(h * 3 / 2, w, CV_8UC1);
-    auto * y_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
-    auto * u_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
-    auto * v_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 2));
-    int ys = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-    int us = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
-    int vs = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2);
-    for (int r = 0; r < h; ++r)
-      std::memcpy(yuv.ptr(r), y_src + r * ys, w);
-    for (int r = 0; r < h / 2; ++r)
-      std::memcpy(yuv.ptr(h + r), u_src + r * us, w / 2);
-    for (int r = 0; r < h / 2; ++r)
-      std::memcpy(yuv.ptr(h + h / 2 + r), v_src + r * vs, w / 2);
-    int code = (fmt == GST_VIDEO_FORMAT_I420) ?
-      cv::COLOR_YUV2BGR_I420 : cv::COLOR_YUV2BGR_YV12;
-    cv::cvtColor(yuv, out_mat, code);
+    uint8_t * dst = yuv.data;
+    const auto * y_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
+    const int ys = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
+    for (int r = 0; r < h; ++r) {
+      std::memcpy(dst + static_cast<size_t>(r) * w, y_src + static_cast<size_t>(r) * ys, w);
+    }
+
+    if (fmt == GST_VIDEO_FORMAT_NV12) {
+      // Single interleaved UV plane: ch rows of w bytes (cw UV pairs).
+      const auto * uv_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
+      const int uvs = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
+      uint8_t * uv_dst = dst + static_cast<size_t>(h) * w;
+      for (int r = 0; r < ch; ++r) {
+        std::memcpy(uv_dst + static_cast<size_t>(r) * w, uv_src + static_cast<size_t>(r) * uvs, w);
+      }
+      cv::cvtColor(yuv, out_mat, cv::COLOR_YUV2BGR_NV12);
+    } else {
+      // I420 (Y,U,V) / YV12 (Y,V,U): two separate ch x cw chroma planes.
+      // GstVideoFrame plane indices follow the format's native plane order,
+      // and the matching cv code expects that same order, so packing
+      // plane(1) then plane(2) contiguously is correct for both.
+      const auto * c0_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
+      const auto * c1_src = static_cast<const uint8_t *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 2));
+      const int c0s = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
+      const int c1s = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2);
+      uint8_t * c0_dst = dst + static_cast<size_t>(h) * w;
+      uint8_t * c1_dst = c0_dst + static_cast<size_t>(ch) * cw;
+      for (int r = 0; r < ch; ++r) {
+        std::memcpy(c0_dst + static_cast<size_t>(r) * cw, c0_src + static_cast<size_t>(r) * c0s, cw);
+      }
+      for (int r = 0; r < ch; ++r) {
+        std::memcpy(c1_dst + static_cast<size_t>(r) * cw, c1_src + static_cast<size_t>(r) * c1s, cw);
+      }
+      const int code = (fmt == GST_VIDEO_FORMAT_I420) ?
+        cv::COLOR_YUV2BGR_I420 : cv::COLOR_YUV2BGR_YV12;
+      cv::cvtColor(yuv, out_mat, code);
+    }
     out_encoding = "bgr8";
     out_channels = 3;
   } else {
@@ -590,6 +852,10 @@ GstFlowReturn ImageProcNode::on_new_sample(GstAppSink * sink, gpointer user_data
   const auto image_header = msg->header;
   self->output_pub_->publish(std::move(msg));
   self->publish_transformed_camera_info(image_header);
+  // A delivered frame proves the pipeline is healthy: clear the recovery
+  // budget so transient errors that later recover don't accumulate across the
+  // node's lifetime toward permanent direct-mode degradation.
+  self->bus_error_count_.store(0, std::memory_order_relaxed);
   return GST_FLOW_OK;
 }
 
@@ -601,12 +867,18 @@ void ImageProcNode::poll_bus()
 {
   if (!pipeline_) { return; }
 
+  // Total GPU-pipeline recovery attempts over the node's lifetime. Once
+  // exhausted, the node degrades to direct mode permanently rather than
+  // flapping or dying silently.
+  constexpr int kMaxBusErrorRetries = 3;
+
   GstBus * bus = gst_element_get_bus(pipeline_);
   GstMessage * msg = gst_bus_pop_filtered(
     bus,
     static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
 
   if (msg) {
+    bool recoverable = false;
     switch (GST_MESSAGE_TYPE(msg)) {
       case GST_MESSAGE_ERROR: {
         GError * err = nullptr;
@@ -618,17 +890,55 @@ void ImageProcNode::poll_bus()
           g_free(debug);
         }
         g_error_free(err);
-        shutdown_pipeline();
+        recoverable = true;
         break;
       }
       case GST_MESSAGE_EOS:
-        RCLCPP_INFO(get_logger(), "GStreamer end-of-stream");
-        shutdown_pipeline();
+        // appsrc is a live source we never send EOS to, so EOS on this bus is
+        // abnormal — treat it as a recoverable pipeline fault.
+        RCLCPP_WARN(get_logger(), "GStreamer end-of-stream (unexpected for a live source)");
+        recoverable = true;
         break;
       default:
         break;
     }
     gst_message_unref(msg);
+    gst_object_unref(bus);
+
+    if (recoverable) {
+      const int errors = bus_error_count_.fetch_add(1) + 1;
+      if (errors < kMaxBusErrorRetries) {
+        RCLCPP_WARN(get_logger(),
+          "Attempting GPU pipeline recovery (%d/%d)…",
+          errors, kMaxBusErrorRetries);
+        schedule_rebuild();  // tears down and rebuilds from current params
+      } else {
+        RCLCPP_ERROR(get_logger(),
+          "GPU pipeline failed %d times without recovering — degrading to "
+          "direct mode permanently.", kMaxBusErrorRetries);
+        // Cancel any rebuild already queued by a prior error, or it would fire
+        // after this fallback and tear down the direct-mode pipeline we install.
+        if (rebuild_timer_) {
+          rebuild_timer_->cancel();
+          rebuild_timer_.reset();
+        }
+        image_sub_.reset();
+        it_sub_.shutdown();
+        shutdown_pipeline();
+        output_pub_.reset();
+        info_pub_.reset();
+        info_sub_.reset();
+        info_transforms_.clear();
+        direct_mode_ = true;
+        try {
+          launch_direct();
+        } catch (const std::exception & e) {
+          RCLCPP_FATAL(get_logger(),
+            "Direct-mode fallback failed (%s); node is idle.", e.what());
+        }
+      }
+    }
+    return;
   }
   gst_object_unref(bus);
 }
@@ -645,6 +955,15 @@ void ImageProcNode::shutdown_pipeline()
   }
 
   image_sub_.reset();
+  it_sub_.shutdown();  // symmetric teardown for the image_transport ingest path
+
+  // Drive the pipeline to NULL FIRST. The downward transition stops and joins
+  // the appsink streaming thread, so no further on_new_sample callback can run
+  // before we drop our element references — eliminating any window where the
+  // streaming thread touches appsrc_/appsink_ after they have been unref'd.
+  if (pipeline_) {
+    gst_element_set_state(pipeline_, GST_STATE_NULL);
+  }
 
   if (appsink_) {
     gst_object_unref(appsink_);
@@ -657,7 +976,6 @@ void ImageProcNode::shutdown_pipeline()
   }
 
   if (pipeline_) {
-    gst_element_set_state(pipeline_, GST_STATE_NULL);
     gst_object_unref(pipeline_);
     pipeline_ = nullptr;
     RCLCPP_INFO(get_logger(), "Pipeline shut down");
@@ -698,12 +1016,12 @@ void ImageProcNode::launch_direct()
     info_transforms_ = factory.camera_info_transforms();
   }
 
-  output_pub_ = create_publisher<sensor_msgs::msg::Image>(config_.output_topic, 10);
+  output_pub_ = create_publisher<sensor_msgs::msg::Image>(config_.output_topic, image_qos());
 
   const auto transport = get_parameter("input_transport").as_string();
   if (transport == "raw") {
     image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      config_.input_topic, 10,
+      config_.input_topic, image_qos(),
       [this](sensor_msgs::msg::Image::UniquePtr msg) {
         on_image_direct(std::move(msg));
       });
@@ -714,7 +1032,7 @@ void ImageProcNode::launch_direct()
         auto owned = std::make_unique<sensor_msgs::msg::Image>(*msg);
         on_image_direct(std::move(owned));
       },
-      transport);
+      transport, image_qos().get_rmw_qos_profile());
   }
 
   setup_camera_info_io(config_.input_topic, config_.output_topic);
@@ -729,6 +1047,25 @@ void ImageProcNode::on_image_direct(sensor_msgs::msg::Image::UniquePtr msg)
 {
   if (!output_pub_) { return; }
   if (msg->width == 0 || msg->height == 0) { return; }
+
+  // Direct mode reinterprets the payload as a 3-channel BGR cv::Mat. Without
+  // this guard a non-bgr8 publisher causes silent channel corruption (rgb8)
+  // or, for sub-3-byte encodings (mono8, step==0), an out-of-bounds read in
+  // cv::resize. Reject anything that is not a well-formed bgr8 frame.
+  if (msg->encoding != "bgr8") {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Direct mode expects bgr8 input; got '%s' — dropping frame "
+      "(enable a GPU backend or republish as bgr8)", msg->encoding.c_str());
+    return;
+  }
+  const size_t expected_step = static_cast<size_t>(msg->width) * 3u;
+  const size_t expected_size = static_cast<size_t>(msg->step) * msg->height;
+  if (msg->step < expected_step || msg->data.size() < expected_size) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Malformed bgr8 frame (w=%u h=%u step=%u size=%zu) — dropping",
+      msg->width, msg->height, msg->step, msg->data.size());
+    return;
+  }
 
   // Wrap the incoming BGR data as a cv::Mat (zero-copy reference into
   // the intra-process UniquePtr; the cv::resize call below writes to a

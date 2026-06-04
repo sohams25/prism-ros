@@ -6,8 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege token: CI only needs to read the repo.
+permissions:
+  contents: read
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Primary gate: dependencies via rosdep, build, and run the behavioral test
+  # suite (PipelineFactory unit tests + the ImageProcNode launch_testing
+  # integration test). --return-code-on-test-failure makes a failing test fail
+  # the job (the previous workflow could not fail on a test regression).
+  # ---------------------------------------------------------------------------
   build-test:
+    name: build + test (humble)
     runs-on: ubuntu-22.04
     container: ros:humble
     env:
@@ -15,28 +26,22 @@ jobs:
       ROS_DISTRO: humble
     steps:
       - name: Checkout
+        # TODO(supply-chain): pin actions to commit SHAs (e.g. via `pinact`)
+        # before treating CI as release-grade; tags are mutable.
         uses: actions/checkout@v4
         with:
           path: src/prism_image_proc
 
-      - name: Cache apt
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt
-          key: apt-${{ runner.os }}-humble-v1
-
-      - name: Install system deps
+      - name: Install build tooling + resolve deps via rosdep
         shell: bash
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake \
-            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            ros-humble-cv-bridge \
-            ros-humble-image-transport \
-            ros-humble-ament-cmake-gtest \
-            python3-colcon-common-extensions
+            build-essential cmake python3-colcon-common-extensions
+          rosdep update
+          # rosdep reads package.xml — this is the single source of truth for
+          # dependencies (no hand-curated apt list to drift out of sync).
+          rosdep install --from-paths src --ignore-src -y
 
       - name: colcon build
         shell: bash
@@ -47,16 +52,17 @@ jobs:
             --packages-select prism_image_proc \
             --event-handlers console_direct+
 
-      - name: colcon test
+      - name: colcon test (behavioral gate)
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
           source install/setup.bash
-          # Run only the gtest we own; ament_lint_auto picks up pre-existing
-          # style issues in scripts/ and is tracked separately.
+          # Run the package's own behavioral tests, not the ament_lint suite
+          # (lint debt is surfaced by the separate non-blocking `lint` job).
           colcon test \
             --packages-select prism_image_proc \
-            --ctest-args -R test_pipeline_factory \
+            --ctest-args -R "test_pipeline_factory|test_direct_mode_integration" \
+            --return-code-on-test-failure \
             --event-handlers console_direct+
           colcon test-result --verbose
 
@@ -64,5 +70,164 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: colcon-log
+          name: colcon-log-humble
           path: log/
+
+  # ---------------------------------------------------------------------------
+  # Sanitizers: build the unit tests with ASan + UBSan and run them. Catches
+  # memory errors / UB on the PipelineFactory + transform paths that the plain
+  # build cannot. (The launch_testing node is excluded — running a full ROS
+  # process under ASan in CI is noisy; the unit gtest is the focused target.)
+  # ---------------------------------------------------------------------------
+  sanitizers:
+    name: asan + ubsan (humble)
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src/prism_image_proc
+
+      - name: Resolve deps
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions
+          rosdep update
+          rosdep install --from-paths src --ignore-src -y
+
+      - name: Build + run gtest under ASan/UBSan
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build \
+            --packages-select prism_image_proc \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Debug \
+              "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            --event-handlers console_direct+
+          source install/setup.bash
+          export ASAN_OPTIONS=detect_leaks=0:halt_on_error=1
+          export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+          colcon test \
+            --packages-select prism_image_proc \
+            --ctest-args -R test_pipeline_factory \
+            --return-code-on-test-failure \
+            --event-handlers console_direct+
+          colcon test-result --verbose
+
+  # ---------------------------------------------------------------------------
+  # Lint (advisory). ament_lint flags pre-existing house-style debt across the
+  # tree; surfaced here as non-blocking until the codebase is brought to ament
+  # style. Do NOT promote to a required check without first reformatting.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: ament_lint (advisory)
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    continue-on-error: true
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src/prism_image_proc
+
+      - name: Resolve deps
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions
+          rosdep update
+          rosdep install --from-paths src --ignore-src -y
+
+      - name: Build + run lint tests
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --packages-select prism_image_proc
+          source install/setup.bash
+          colcon test \
+            --packages-select prism_image_proc \
+            --ctest-args -R "lint|cpplint|flake8|pep257|uncrustify|copyright|xmllint" \
+            --event-handlers console_direct+ || true
+          colcon test-result --verbose || true
+
+  # ---------------------------------------------------------------------------
+  # Jazzy build (forward-compat). Jazzy ships GStreamer 1.24 where the Intel
+  # vapostproc GPU path is exercised; allowed to fail until officially
+  # supported, but surfaces API/dependency drift early.
+  # ---------------------------------------------------------------------------
+  build-jazzy:
+    name: build + test (jazzy)
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    continue-on-error: true
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ROS_DISTRO: jazzy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src/prism_image_proc
+
+      - name: Resolve deps
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions
+          rosdep update
+          rosdep install --from-paths src --ignore-src -y
+
+      - name: Build + test
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --packages-select prism_image_proc --event-handlers console_direct+
+          source install/setup.bash
+          colcon test \
+            --packages-select prism_image_proc \
+            --ctest-args -R "test_pipeline_factory|test_direct_mode_integration" \
+            --return-code-on-test-failure \
+            --event-handlers console_direct+
+          colcon test-result --verbose
+
+  # ---------------------------------------------------------------------------
+  # arm64 cross-build (Jetson is the primary accelerated target). QEMU-emulated
+  # build under the arm64 ros:humble image; build-only (emulated test execution
+  # is too slow for CI). Allowed to fail until wired into the release process.
+  # ---------------------------------------------------------------------------
+  build-arm64:
+    name: build (arm64 / humble, qemu)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Cross-build for arm64
+        shell: bash
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/ws/src/prism_image_proc -w /ws \
+            -e DEBIAN_FRONTEND=noninteractive \
+            arm64v8/ros:humble bash -c '
+              apt-get update &&
+              apt-get install -y --no-install-recommends \
+                build-essential cmake python3-colcon-common-extensions &&
+              rosdep update &&
+              rosdep install --from-paths src --ignore-src -y &&
+              source /opt/ros/humble/setup.bash &&
+              colcon build --packages-select prism_image_proc --event-handlers console_direct+
+            '

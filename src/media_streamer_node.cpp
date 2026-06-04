@@ -5,6 +5,7 @@
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <chrono>
+#include <stdexcept>
 
 namespace prism
 {
@@ -24,7 +25,11 @@ MediaStreamerNode::MediaStreamerNode(const rclcpp::NodeOptions & options)
   cap_.open(video_path_);
   if (!cap_.isOpened()) {
     RCLCPP_ERROR(get_logger(), "Cannot open video: %s", video_path_.c_str());
-    return;
+    // Throw rather than return: a half-constructed node that registers in the
+    // graph but publishes nothing is a silent zombie. Throwing makes the
+    // component container report the load failure to the operator.
+    throw std::runtime_error(
+      "MediaStreamerNode: cannot open video '" + video_path_ + "'");
   }
 
   int w = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));

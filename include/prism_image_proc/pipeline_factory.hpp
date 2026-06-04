@@ -33,6 +33,12 @@ struct PipelineConfig
   std::string flip_method = "none";
 };
 
+// Returns true if a GStreamer element factory with this name is registered.
+// Unlike a bare gst_element_factory_find() used as a boolean, this releases
+// the (transfer-full) factory reference it acquires, so probing the registry
+// does not leak a GstElementFactory ref on every call.
+bool factory_exists(const char * element_name);
+
 // Confirms that the elements required by the detected platform exist in the
 // live GStreamer registry. Demotes to CPU_FALLBACK if not.
 PlatformInfo validate_platform(

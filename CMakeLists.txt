@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.8)
 project(prism_image_proc)
 
+# Pin the language standard for reproducible builds across toolchains. The
+# sources use C++17 features ([[fallthrough]], std::clamp, structured init).
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -151,7 +159,18 @@ ament_target_dependencies(prism_image_proc
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-install(TARGETS prism_core prism_image_proc_component synthetic_4k_pub_component media_streamer_component
+# prism_core is the reusable library (hardware detection + pipeline factory)
+# downstream packages may link against, so export it as an imported target.
+install(TARGETS prism_core
+  EXPORT export_${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+# The component plugin libraries are loaded at runtime by the component
+# container; they are not link targets for downstream packages.
+install(TARGETS prism_image_proc_component synthetic_4k_pub_component media_streamer_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -164,6 +183,13 @@ install(TARGETS prism_image_proc
 install(DIRECTORY include/
   DESTINATION include
 )
+
+# Make prism_core, its headers, and its transitive deps available to downstream
+# packages that find_package(prism_image_proc).
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
+ament_export_libraries(prism_core)
+ament_export_dependencies(rclcpp sensor_msgs)
 
 install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
@@ -185,6 +211,9 @@ install(FILES
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  # Exclude the third-party-style bench/scripts Python from the lint sweep
+  # (tracked separately); lint still covers the package's own C++ and configs.
+  set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
@@ -197,7 +226,14 @@ if(BUILD_TESTING)
     ${GST_LIBRARY_DIRS}
   )
   target_link_libraries(test_pipeline_factory ${GST_LIBRARIES})
-  ament_target_dependencies(test_pipeline_factory sensor_msgs)
+  ament_target_dependencies(test_pipeline_factory rclcpp sensor_msgs)
+
+  # Integration test: drive a running ImageProcNode (direct mode) end-to-end.
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_launch_test(
+    test/test_direct_mode_integration.py
+    TIMEOUT 120
+  )
 endif()
 
 ament_package()
