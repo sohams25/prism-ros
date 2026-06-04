@@ -25,7 +25,7 @@ rclcpp::NodeOptions with_default_action(
 }  // namespace
 
 ColorConvertNode::ColorConvertNode(const rclcpp::NodeOptions & options)
-: ImageProcNode(with_default_action(options, "colorconvert"))
+: ImageProcNode(with_default_action(options, "colorconvert"), "color_convert_node")
 {
 }
 

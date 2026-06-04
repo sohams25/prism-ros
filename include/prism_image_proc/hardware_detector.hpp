@@ -18,7 +18,9 @@ const char * to_string(HardwarePlatform platform);
 
 struct PlatformInfo
 {
-  HardwarePlatform platform;
+  // Default to the always-safe CPU fallback so a default-constructed
+  // PlatformInfo is never in an indeterminate state.
+  HardwarePlatform platform = HardwarePlatform::CPU_FALLBACK;
   std::string render_device;          // e.g. "/dev/dri/renderD128"
   std::vector<std::string> evidence;  // paths that matched during probing
 };

@@ -49,8 +49,10 @@ def _convert(buf, src_enc, tgt_enc):
                     + buf[:, :, 1] * 0.587
                     + buf[:, :, 2] * 0.114).astype(np.uint8)
 
-    # Fallback: passthrough, unchanged data.
-    return buf.copy()
+    # Unsupported conversion. Raise rather than silently returning the wrong
+    # pixels — the caller logs and drops, so a misconfigured benchmark is
+    # visible instead of producing quietly-incorrect comparison data.
+    raise ValueError(f'unsupported colorconvert {src_enc!r} -> {tgt_enc!r}')
 
 
 class ColorConvertSubscriber(Node):
@@ -79,7 +81,12 @@ class ColorConvertSubscriber(Node):
         h, w = msg.height, msg.width
         buf = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, -1)
 
-        out_arr = _convert(buf, src_enc, self.target_encoding_)
+        try:
+            out_arr = _convert(buf, src_enc, self.target_encoding_)
+        except ValueError as exc:
+            self.get_logger().warning(
+                f'{exc} — dropping frame', throttle_duration_sec=2.0)
+            return
 
         out = Image()
         out.header = msg.header

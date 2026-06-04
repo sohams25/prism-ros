@@ -25,7 +25,7 @@ rclcpp::NodeOptions with_default_action(
 }  // namespace
 
 CropNode::CropNode(const rclcpp::NodeOptions & options)
-: ImageProcNode(with_default_action(options, "crop"))
+: ImageProcNode(with_default_action(options, "crop"), "crop_node")
 {
 }
 
