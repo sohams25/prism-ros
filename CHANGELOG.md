@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Production-hardening pass. See [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
+for the full audit, fixes, and remaining roadmap.
+
+### Fixed
+
+- **Heap overflow** in the I420/YV12 appsink egress handler — the V-plane copy
+  wrote past the assembly `cv::Mat`. Rewrote chroma packing to stay within the
+  `h*3/2*w` budget and added an even-dimension guard.
+- **Silent corruption / out-of-bounds read** on non-`bgr8` input — `on_image`
+  and `on_image_direct` now validate encoding, step, and data size and
+  warn-and-drop malformed frames.
+- **Node crash via `ros2 param set`** — invalid `target_encoding` / `crop_*` /
+  `flip_method` values are now rejected synchronously (dry-run build), and the
+  deferred rebuild degrades to direct mode on error instead of throwing out of
+  the timer callback.
+- **`use_scale` integer overflow** when narrowing scaled dimensions to `int`.
+- **`rosdep install` failure** — removed the spurious non-existent `gst_bridge`
+  dependency and declared the actual GStreamer dev (build) + runtime plugin deps.
+- **`GstElementFactory` reference leak** on every registry probe (≈12 sites) via
+  a new `factory_exists()` helper.
+- **GStreamer teardown ordering** (NULL-state before element unref) and a
+  `gst_parse_launch` partial-parse pipeline leak.
+- **Stereo `CameraInfo`** — `resize` now scales the projection `Tx`/`Ty` terms.
+
+### Added
+
+- Fallback to direct mode (and bounded GPU-pipeline recovery on bus ERROR/EOS)
+  instead of a silent, output-less zombie node on pipeline failure.
+- `SensorDataQoS` default for image / CameraInfo I/O (camera-driver
+  interoperability) with a `reliable_qos` parameter escape hatch.
+- `ParameterDescriptor` ranges on dimension / scale / crop parameters.
+- Distinct default node names per wrapper; `ament_export_*` so downstream
+  packages can link `prism_core`.
+- Test suite expanded 11 → 21 unit cases plus a `launch_testing` integration
+  test that drives a running node end-to-end.
+- CI rebuilt as a real gate (`rosdep` deps, `--return-code-on-test-failure`,
+  least-privilege token) with ASan/UBSan, advisory lint, Jazzy, and QEMU arm64
+  jobs.
+
+### Changed
+
+- `MediaStreamerNode` now throws on video-open failure (visible component-load
+  failure) rather than constructing a silent idle node.
+
 ## [0.1.0] - 2026-04-27
 
 Initial public release of `prism_image_proc` — a hardware-agnostic
