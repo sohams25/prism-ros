@@ -160,15 +160,14 @@ jobs:
           colcon test-result --verbose || true
 
   # ---------------------------------------------------------------------------
-  # Jazzy build (forward-compat). Jazzy ships GStreamer 1.24 where the Intel
-  # vapostproc GPU path is exercised; allowed to fail until officially
-  # supported, but surfaces API/dependency drift early.
+  # Jazzy build + test (blocking). Jazzy ships GStreamer 1.24 (where the Intel
+  # vapostproc GPU path is available) and cv_bridge's .hpp header; both are
+  # supported, so this is a real gate alongside Humble.
   # ---------------------------------------------------------------------------
   build-jazzy:
     name: build + test (jazzy)
     runs-on: ubuntu-24.04
     container: ros:jazzy
-    continue-on-error: true
     env:
       DEBIAN_FRONTEND: noninteractive
       ROS_DISTRO: jazzy
