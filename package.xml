@@ -10,7 +10,9 @@
     a direct cv::resize fallback. Supports chainable resize, crop, flip,
     and colorconvert actions with matching CameraInfo transforms.
   </description>
-  <maintainer email="baremetal@todo.todo">baremetal</maintainer>
+  <!-- TODO(maintainer): set a real, monitored maintainer email before any
+       bloom / rosdistro (ROS index) submission — a placeholder blocks release. -->
+  <maintainer email="baremetal@todo.todo">Soham</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://sohams25.github.io/prism-ros/</url>
   <url type="repository">https://github.com/sohams25/prism-ros</url>
@@ -25,15 +27,34 @@
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
 
-  <exec_depend>gst_bridge</exec_depend>
-  <exec_depend>image_proc</exec_depend>
+  <!-- GStreamer. Dev headers/libs are a hard build dependency (pkg_check_modules
+       REQUIRED in CMakeLists). plugins-base provides gstapp + gstvideo (the .pc
+       files linked here). Runtime base + good plugins back the CPU/direct and
+       legacy pipelines. The Intel VA-API plugin (apt: gstreamer1.0-vaapi) and
+       Jetson NVMM elements (shipped with the L4T image) are optional and have
+       no portable rosdep key, so they are left to platform install docs rather
+       than declared here — see README install notes. -->
+  <build_depend>libgstreamer1.0-dev</build_depend>
+  <build_depend>libgstreamer-plugins-base1.0-dev</build_depend>
+  <build_export_depend>libgstreamer1.0-dev</build_export_depend>
+  <build_export_depend>libgstreamer-plugins-base1.0-dev</build_export_depend>
+  <exec_depend>gstreamer1.0-plugins-base</exec_depend>
+  <exec_depend>gstreamer1.0-plugins-good</exec_depend>
+
+  <!-- Python helper nodes used by the demo / A-B benchmark launch files. -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-psutil</exec_depend>
 
+  <!-- Benchmark-only: A_B_comparison.launch.py loads stock image_proc nodes on
+       the comparison side. Not required to run prism's own components. -->
+  <exec_depend>image_proc</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>launch_testing_ros</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
