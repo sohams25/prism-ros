@@ -200,33 +200,43 @@ jobs:
           colcon test-result --verbose
 
   # ---------------------------------------------------------------------------
-  # arm64 cross-build (Jetson is the primary accelerated target). QEMU-emulated
-  # build under the arm64 ros:humble image; build-only (emulated test execution
-  # is too slow for CI). Allowed to fail until wired into the release process.
+  # arm64 build + unit tests (Jetson is the primary accelerated target). Runs on
+  # a NATIVE arm64 runner (free for public repos) — no QEMU, so no emulation
+  # segfaults. Scoped to the PipelineFactory unit gtest (the launch_testing
+  # integration test runs on the x86 Humble/Jazzy jobs); this is the
+  # deterministic arch-coverage gate verified on real Jetson Orin hardware.
   # ---------------------------------------------------------------------------
   build-arm64:
-    name: build (arm64 / humble, qemu)
-    runs-on: ubuntu-22.04
-    continue-on-error: true
+    name: build + test (arm64 / humble)
+    runs-on: ubuntu-22.04-arm
+    container: ros:humble
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ROS_DISTRO: humble
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: src/prism_image_proc
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Cross-build for arm64
+      - name: Resolve deps
         shell: bash
         run: |
-          docker run --rm --platform linux/arm64 \
-            -v "$PWD":/ws/src/prism_image_proc -w /ws \
-            -e DEBIAN_FRONTEND=noninteractive \
-            arm64v8/ros:humble bash -c '
-              apt-get update &&
-              apt-get install -y --no-install-recommends \
-                build-essential cmake python3-colcon-common-extensions &&
-              rosdep update &&
-              rosdep install --from-paths src --ignore-src -y &&
-              source /opt/ros/humble/setup.bash &&
-              colcon build --packages-select prism_image_proc --event-handlers console_direct+
-            '
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions
+          rosdep update
+          rosdep install --from-paths src --ignore-src -y
+
+      - name: Build + unit test
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --packages-select prism_image_proc --event-handlers console_direct+
+          source install/setup.bash
+          colcon test \
+            --packages-select prism_image_proc \
+            --ctest-args -R test_pipeline_factory \
+            --return-code-on-test-failure \
+            --event-handlers console_direct+
+          colcon test-result --verbose

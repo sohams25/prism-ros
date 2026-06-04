@@ -46,8 +46,8 @@ for the full audit, fixes, and remaining roadmap.
 - Test suite expanded 11 → 21 unit cases plus a `launch_testing` integration
   test that drives a running node end-to-end.
 - CI rebuilt as a real gate (`rosdep` deps, `--return-code-on-test-failure`,
-  least-privilege token) with ASan/UBSan, advisory lint, Jazzy, and QEMU arm64
-  jobs.
+  least-privilege token) with ASan/UBSan, advisory lint, Jazzy, and a native
+  arm64 (Jetson-target) build+test job.
 
 ### Changed
 
