@@ -57,7 +57,7 @@ durable record of the audit findings, what has been fixed, and what remains.
 | `ament_export_targets/libraries/include_directories/dependencies` + `EXPORT` install so downstream packages can link `prism_core` | `missing-ament-export-for-prism-core` | `CMakeLists.txt` |
 | Stereo `CameraInfo` correctness — `resize_camera_info` now scales `P[3]`/`P[7]` (Tx/Ty), fixing silent disparity-to-depth corruption on rectified stereo | `camera-info-stereo-tx-untested` | `src/pipeline_factory.cpp` |
 | Tests — unit suite 11 → **21** (per-backend fragment build strings, `validate_platform`/`factory_exists`, vertical flip, stereo Tx, crop/encoding/flip throw paths) **plus** a `launch_testing` integration test that drives a live `ImageProcNode` in direct mode and asserts output dims/encoding + transformed CameraInfo | `no-integration-test-node-runtime`, `*-untested` | `test/` |
-| CI rebuilt into a real gate: `rosdep`-driven deps, `--return-code-on-test-failure` (the old gate could not fail), least-privilege `permissions`, **+ jobs** for ASan/UBSan, advisory `ament_lint`, a **blocking Jazzy build+test** (cross-distro `cv_bridge` include), and a QEMU arm64 cross-build | `ci-test-result-no-exit-code`, `ci-no-sanitizer-run`, `ci-no-rosdep-install`, `ci-no-distro-matrix`, `ci-no-arm64-build` | `.github/workflows/ci.yml` |
+| CI rebuilt into a real gate: `rosdep`-driven deps, `--return-code-on-test-failure` (the old gate could not fail), least-privilege `permissions`, **+ jobs** for ASan/UBSan, advisory `ament_lint`, a **blocking Jazzy build+test** (cross-distro `cv_bridge` include), and a **native arm64 build+test** (Jetson target, no QEMU) | `ci-test-result-no-exit-code`, `ci-no-sanitizer-run`, `ci-no-rosdep-install`, `ci-no-distro-matrix`, `ci-no-arm64-build` | `.github/workflows/ci.yml` |
 | Docs-vs-code drift — qualified the "drop-in / same parameters" claim (topics, CameraInfo derivation, QoS), corrected the `vaapipostproc`→direct-mode prose, documented the direct-mode action-dropping limitation and the CameraInfo-topic collision footgun | `drop-in-topic-param-mismatch`, `vaapipostproc-arch-claim-misleading`, `direct-mode-chain-silent-drop-undocumented` | `README.md` |
 
 ### Phase 3 — remaining (tracked follow-ups)
@@ -73,8 +73,10 @@ durable record of the audit findings, what has been fixed, and what remains.
 - **Maintainer email.** `package.xml` still has a placeholder
   (`baremetal@todo.todo`, flagged with a TODO). Set a real, monitored address
   before any bloom / rosdistro submission. (`maintainer-email-placeholder`)
-- **Wire the arm64 job into release.** Today it is `continue-on-error` (QEMU,
-  build-only). Promote once Jetson is a release target.
+- **arm64 GPU-path coverage.** The arm64 job (native runner, build + unit
+  tests) is a blocking gate, but the accelerated `nvvidconv` path itself is only
+  exercisable on real Jetson hardware (validated manually on the Orin) — wire a
+  self-hosted Jetson runner if continuous GPU-path CI is wanted.
 
 ## Phase 4 — Extend (post-stabilization)
 
