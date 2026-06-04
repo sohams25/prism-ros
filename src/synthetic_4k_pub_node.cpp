@@ -1,6 +1,12 @@
 #include "prism_image_proc/synthetic_4k_pub_node.hpp"
 
+// cv_bridge.h (Humble) was renamed to cv_bridge.hpp in Jazzy; include whichever
+// the active distro provides.
+#if __has_include(<cv_bridge/cv_bridge.hpp>)
+#include <cv_bridge/cv_bridge.hpp>
+#else
 #include <cv_bridge/cv_bridge.h>
+#endif
 #include <opencv2/imgproc.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 

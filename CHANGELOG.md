@@ -30,6 +30,9 @@ for the full audit, fixes, and remaining roadmap.
 - **GStreamer teardown ordering** (NULL-state before element unref) and a
   `gst_parse_launch` partial-parse pipeline leak.
 - **Stereo `CameraInfo`** — `resize` now scales the projection `Tx`/`Ty` terms.
+- **Cross-distro `cv_bridge` include** — use `cv_bridge.hpp` where present
+  (Jazzy) and fall back to `cv_bridge.h` (Humble), so the package builds on both;
+  ROS 2 Jazzy build + tests are now a blocking CI gate alongside Humble.
 
 ### Added
 

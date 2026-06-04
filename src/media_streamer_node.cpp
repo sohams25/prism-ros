@@ -1,6 +1,13 @@
 #include "prism_image_proc/media_streamer_node.hpp"
 
+// cv_bridge shipped the C++ API as cv_bridge.h through Humble and renamed it to
+// cv_bridge.hpp in Jazzy (the .h was removed). Include whichever exists so the
+// package builds across distros.
+#if __has_include(<cv_bridge/cv_bridge.hpp>)
+#include <cv_bridge/cv_bridge.hpp>
+#else
 #include <cv_bridge/cv_bridge.h>
+#endif
 #include <opencv2/imgproc.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 
