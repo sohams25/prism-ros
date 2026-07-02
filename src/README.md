@@ -1,8 +1,7 @@
 # src/
 
-This directory is a flat mix of library, node, helper, and
-entry-point sources. Subdirectory grouping (`core/`, `nodes/`) is
-on the post-submission cleanup list.
+Flat layout: the `prism_core` library, the component node sources,
+demo helpers, and the standalone entry point.
 
 | File | CMake target | Role |
 |---|---|---|
