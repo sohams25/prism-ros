@@ -26,9 +26,9 @@ jobs:
       ROS_DISTRO: humble
     steps:
       - name: Checkout
-        # TODO(supply-chain): pin actions to commit SHAs (e.g. via `pinact`)
-        # before treating CI as release-grade; tags are mutable.
-        uses: actions/checkout@v4
+        # Actions are pinned to commit SHAs (tags are mutable); the trailing
+        # comment records the tag each digest corresponds to.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           path: src/prism_image_proc
 
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: colcon-log-humble
           path: log/
@@ -87,7 +87,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           path: src/prism_image_proc
 
@@ -134,7 +134,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           path: src/prism_image_proc
 
@@ -173,7 +173,7 @@ jobs:
       ROS_DISTRO: jazzy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           path: src/prism_image_proc
 
@@ -215,7 +215,7 @@ jobs:
       ROS_DISTRO: humble
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           path: src/prism_image_proc
 

@@ -66,12 +66,14 @@ class TestDirectMode(unittest.TestCase):
         pub_img = self.node.create_publisher(Image, '/camera/image_raw', 10)
         pub_info = self.node.create_publisher(CameraInfo, '/camera/camera_info', 10)
 
-        recv = {'img': 0, 'info': 0, 'dims': None, 'enc': None, 'info_wh': None}
+        recv = {'img': 0, 'info': 0, 'dims': None, 'enc': None, 'info_wh': None,
+                'frame_id': None}
 
         def on_img(msg):
             recv['img'] += 1
             recv['dims'] = (msg.width, msg.height)
             recv['enc'] = msg.encoding
+            recv['frame_id'] = msg.header.frame_id
 
         def on_info(msg):
             if msg.width == OUT_W:  # the node's transformed (output) CameraInfo
@@ -129,6 +131,8 @@ class TestDirectMode(unittest.TestCase):
             recv['img'], 3, 'no processed frames received from the node')
         self.assertEqual(recv['dims'], (OUT_W, OUT_H), 'output not resized to 640x480')
         self.assertEqual(recv['enc'], 'bgr8', 'output encoding is not bgr8')
+        self.assertEqual(recv['frame_id'], 'itest',
+                         'input frame_id not preserved on the output image')
         self.assertGreaterEqual(
             recv['info'], 1, 'no transformed CameraInfo received')
         self.assertEqual(recv['info_wh'], (OUT_W, OUT_H),

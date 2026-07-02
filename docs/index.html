@@ -681,11 +681,11 @@
       </a>
     </div>
     <div class="status-row" aria-label="Project status">
-      <span>ROS 2 Humble</span>
+      <span>ROS 2 Humble · Jazzy</span>
       <span class="dot">·</span>
       <span>Apache-2.0</span>
       <span class="dot">·</span>
-      <span>v0.1.0</span>
+      <span>v0.2.0</span>
     </div>
   </div>
 </section>
@@ -702,16 +702,20 @@
         <p class="lede">
           Prism is a <strong>hardware-agnostic ROS 2 image-processing accelerator</strong>. It's a
           drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline — same
-          parameters, same output, with a scaled <code>CameraInfo</code> on the paired topic —
-          that detects and live-validates host accelerators at startup against the GStreamer
-          registry: a GStreamer pipeline with zero-copy intra-process ingest, single-copy
-          egress, and no DDS round-trip on supported GPUs (Intel VA-API, NVIDIA Jetson NVMM),
-          or a direct <code>cv::resize</code> fallback when no usable GPU path is present.
+          resize semantics and parameters, with a scaled <code>CameraInfo</code> on the paired
+          topic (topic wiring and QoS defaults are prism's own; the
+          <a href="https://github.com/sohams25/prism-ros#usage" rel="noopener">README's drop-in notes</a>
+          cover the differences) — that detects and live-validates host accelerators at startup
+          against the GStreamer registry: a GStreamer pipeline with zero-copy intra-process
+          ingest, single-copy egress, and no DDS round-trip on supported GPUs (Intel VA-API,
+          NVIDIA Jetson NVMM), or a direct <code>cv::resize</code> fallback when no usable GPU
+          path is present.
         </p>
         <ul class="bullets">
           <li>Drop-in replacement for <code>image_proc::ResizeNode</code>'s resize pipeline</li>
           <li>Detects and live-validates VA-API / NVMM / CPU at startup; per-action routing is operator-measured</li>
           <li>Zero-copy intra-process ingest, single-copy egress, no DDS round-trip</li>
+          <li>CI-gated on Humble and Jazzy — build, unit + integration tests, ASan/UBSan, native arm64</li>
         </ul>
       </div>
       <div>
@@ -745,7 +749,7 @@
         <span class="step-num" aria-hidden="true">1</span>
         <div>
           <h3>Install prerequisites</h3>
-          <p>On Ubuntu 22.04 with ROS 2 Humble. Pull the image-transport plumbing and the GStreamer dev headers.</p>
+          <p>On Ubuntu 22.04 with ROS 2 Humble (shown) or Ubuntu 24.04 with ROS 2 Jazzy (substitute <code>ros-jazzy-*</code>). Pull the image-transport plumbing and the GStreamer dev headers.</p>
           <div class="code">
             <div class="code-header">
               <span>shell</span>
@@ -789,7 +793,7 @@ source install/setup.bash</code></pre>
         <span class="step-num" aria-hidden="true">3</span>
         <div>
           <h3>Run the demo</h3>
-          <p>Launches a synthetic source feeding a Prism resize node in the same composable container — intra-process delivery, no DDS round-trip; zero-copy ingest plus single-copy egress where the host supports it.</p>
+          <p>Launches a <code>prism::ResizeNode</code> in a component container, subscribed to <code>/camera/image_raw</code>. Point a camera driver at that topic, or run <code>prism::MediaStreamerNode</code> / <code>prism::Synthetic4kPubNode</code> in a second terminal as the source.</p>
           <div class="code">
             <div class="code-header">
               <span>shell</span>
@@ -1034,7 +1038,7 @@ source install/setup.bash</code></pre>
       <table class="tbl">
         <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td data-label="Parameter">action</td><td data-label="Type">string</td><td data-label="Default"><code>resize</code></td><td data-label="Description">One of <code>resize</code>, <code>crop</code>, <code>flip</code>, <code>colorconvert</code>.</td></tr>
+          <tr><td data-label="Parameter">action</td><td data-label="Type">string</td><td data-label="Default"><code>resize</code></td><td data-label="Description">Action chain, comma- or pipe-separated (e.g. <code>crop,resize,colorconvert</code>) over <code>resize</code>, <code>crop</code>, <code>flip</code>, <code>colorconvert</code>.</td></tr>
           <tr><td data-label="Parameter">target_encoding</td><td data-label="Type">string</td><td data-label="Default"><code>bgr8</code></td><td data-label="Description">Output encoding for <code>colorconvert</code>: <code>bgr8</code> / <code>rgb8</code> / <code>mono8</code>.</td></tr>
           <tr><td data-label="Parameter">crop_x</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop origin X (pixels from left).</td></tr>
           <tr><td data-label="Parameter">crop_y</td><td data-label="Type">int</td><td data-label="Default"><code>0</code></td><td data-label="Description">Crop origin Y (pixels from top).</td></tr>
@@ -1054,6 +1058,7 @@ source install/setup.bash</code></pre>
           <tr><td data-label="Parameter">publish_camera_info</td><td data-label="Type">bool</td><td data-label="Default"><code>true</code></td><td data-label="Description">Publish a transformed <code>CameraInfo</code> on the paired topic.</td></tr>
           <tr><td data-label="Parameter">camera_info_input_topic</td><td data-label="Type">string</td><td data-label="Default"><code>""</code></td><td data-label="Description">Optional override; empty string derives <code>&lt;image_topic_namespace&gt;/camera_info</code> per ROS convention.</td></tr>
           <tr><td data-label="Parameter">camera_info_output_topic</td><td data-label="Type">string</td><td data-label="Default"><code>""</code></td><td data-label="Description">Optional override for the published <code>CameraInfo</code> topic.</td></tr>
+          <tr><td data-label="Parameter">reliable_qos</td><td data-label="Type">bool</td><td data-label="Default"><code>false</code></td><td data-label="Description"><code>false</code> uses <code>SensorDataQoS</code> (BEST_EFFORT), matching standard camera drivers; <code>true</code> selects RELIABLE depth-10 (e.g. for a file/replay source).</td></tr>
           <tr><td data-label="Parameter">source_width</td><td data-label="Type">int</td><td data-label="Default"><code>3840</code></td><td data-label="Description">Source caps width in pixels (GPU mode only).</td></tr>
           <tr><td data-label="Parameter">source_height</td><td data-label="Type">int</td><td data-label="Default"><code>2160</code></td><td data-label="Description">Source caps height in pixels (GPU mode only).</td></tr>
         </tbody>

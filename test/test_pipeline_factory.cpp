@@ -15,6 +15,7 @@
 #include <rclcpp/logging.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
+#include "prism_image_proc/node_options.hpp"
 #include "prism_image_proc/pipeline_factory.hpp"
 
 using prism::HardwarePlatform;
@@ -416,6 +417,30 @@ TEST(FactoryExists, ReportsKnownAndUnknownElements)
   // is always present; a nonsense element name must report absent.
   EXPECT_TRUE(prism::factory_exists("videoconvert"));
   EXPECT_FALSE(prism::factory_exists("definitely_not_a_real_gst_element_xyz"));
+}
+
+// ---------------------------------------------------------------------------
+// Wrapper NodeOptions helper
+// ---------------------------------------------------------------------------
+
+TEST(WithDefaultAction, AppliesWrapperDefault)
+{
+  rclcpp::NodeOptions options;
+  const auto out = prism::with_default_action(options, "crop");
+  const auto & overrides = out.parameter_overrides();
+  ASSERT_EQ(overrides.size(), 1u);
+  EXPECT_EQ(overrides[0].get_name(), "action");
+  EXPECT_EQ(overrides[0].as_string(), "crop");
+}
+
+TEST(WithDefaultAction, CallerOverrideWins)
+{
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("action", "resize,flip")});
+  const auto out = prism::with_default_action(options, "crop");
+  const auto & overrides = out.parameter_overrides();
+  ASSERT_EQ(overrides.size(), 1u);
+  EXPECT_EQ(overrides[0].as_string(), "resize,flip");
 }
 
 int main(int argc, char ** argv)

@@ -423,9 +423,6 @@ void ImageProcNode::publish_transformed_camera_info(
   }
   if (!info_in) { return; }
 
-  // Drop the stale-info case: if the cached CameraInfo is more than one
-  // frame period older than the image, skip (the upstream publisher will
-  // send a fresh one shortly).
   sensor_msgs::msg::CameraInfo out = *info_in;
   out.header = image_header;
 
@@ -640,10 +637,16 @@ void ImageProcNode::on_image(sensor_msgs::msg::Image::UniquePtr msg)
     return;
   }
 
-  // Extract the ROS timestamp BEFORE releasing ownership
+  // Extract the ROS timestamp and frame_id BEFORE releasing ownership. The
+  // timestamp tunnels through GStreamer as the buffer PTS; the frame_id is
+  // stashed for the egress side (buffers carry no string metadata).
   GstClockTime pts =
     static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL +
     msg->header.stamp.nanosec;
+  {
+    std::lock_guard<std::mutex> lock(info_mutex_);
+    ingest_frame_id_ = msg->header.frame_id;
+  }
 
   auto * raw_msg = msg.release();
   uint8_t * data = raw_msg->data.data();
@@ -841,7 +844,10 @@ GstFlowReturn ImageProcNode::on_new_sample(GstAppSink * sink, gpointer user_data
   } else {
     msg->header.stamp = self->now();
   }
-  msg->header.frame_id = "media_frame";
+  {
+    std::lock_guard<std::mutex> lock(self->info_mutex_);
+    msg->header.frame_id = self->ingest_frame_id_;
+  }
   msg->width = out_mat.cols;
   msg->height = out_mat.rows;
   msg->encoding = out_encoding;

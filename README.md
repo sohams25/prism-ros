@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-1a73e8?style=for-the-badge)](LICENSE)
 [![Project Website](https://img.shields.io/badge/Project_Website-prism--ros-8F2D11?style=for-the-badge)](https://sohams25.github.io/prism-ros/)
 [![GitHub](https://img.shields.io/badge/GitHub-sohams25%2Fprism--ros-181717?style=for-the-badge&logo=github)](https://github.com/sohams25/prism-ros)
-[![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-22a06b?style=for-the-badge&logo=ros&logoColor=white)](https://docs.ros.org/en/humble/)
+[![ROS 2 Humble | Jazzy](https://img.shields.io/badge/ROS_2-Humble_%7C_Jazzy-22a06b?style=for-the-badge&logo=ros&logoColor=white)](https://docs.ros.org/en/humble/)
 [![CI](https://img.shields.io/github/actions/workflow/status/sohams25/prism-ros/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/sohams25/prism-ros/actions/workflows/ci.yml)
 
 A hardware-agnostic ROS 2 image-processing accelerator. `prism::ResizeNode` is a drop-in replacement for `image_proc::ResizeNode`'s resize pipeline (one-line launch swap, same parameters, scaled `CameraInfo` on the paired topic). At startup it detects and live-validates host accelerators against the GStreamer registry — Jetson NVMM → Intel VA-API → CPU direct mode — with zero-copy intra-process ingest, single-copy egress, and no DDS round-trip on the supported paths.
@@ -24,7 +24,10 @@ Prism targets the segment of the ROS 2 fleet Isaac ROS does not cover: Intel iGP
 
 ### Prerequisites
 
-ROS 2 Humble on Ubuntu 22.04. GStreamer 1.20+.
+ROS 2 Humble on Ubuntu 22.04 (GStreamer 1.20+). ROS 2 Jazzy on Ubuntu 24.04
+is also supported and CI-gated — substitute `ros-jazzy-*` in the apt lines
+below; GStreamer 1.24 there additionally enables the Intel `vapostproc` GPU
+path (see [Architecture](#architecture)).
 
 ### Install
 
@@ -265,7 +268,7 @@ Repeat with `--operation {crop,colorconvert,chain}`.
 
 ## Contributing & Roadmap
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs the gtest suite on every push and pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml); release history in [CHANGELOG.md](CHANGELOG.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). CI gates every push and pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml): build + unit + integration tests on Humble and Jazzy, ASan/UBSan, and a native arm64 job, plus advisory lint. Release history in [CHANGELOG.md](CHANGELOG.md); the hardening audit lives in [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md).
 
 Forward-looking work, from short-term to exploratory:
 

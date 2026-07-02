@@ -53,6 +53,11 @@ private:
   std::mutex info_mutex_;
   sensor_msgs::msg::CameraInfo::ConstSharedPtr last_info_;
   bool publish_camera_info_ = true;
+  // frame_id of the most recent GPU-path ingest frame, echoed onto egress
+  // messages so TF lookups keep working (direct mode copies the whole input
+  // header instead). Written on the executor thread (on_image), read on the
+  // GStreamer streaming thread (on_new_sample) — guarded by info_mutex_.
+  std::string ingest_frame_id_;
 
   // Config snapshot + CameraInfo transform chain, populated by build_pipeline()
   // or launch_direct(). The transforms apply to an input CameraInfo copy in
