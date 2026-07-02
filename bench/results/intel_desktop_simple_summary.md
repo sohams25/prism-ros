@@ -7,7 +7,7 @@
 
 ## Why direct-mode on Intel
 
-On stock ROS 2 Humble (GStreamer 1.20), the `vapostproc` element is present but fails live validation due to a chroma-subsampling regression in `vaapipostproc`. Prism's GPU detection probes positive on `/dev/dri/renderD*`, but the subsequent live registry check rejects the candidate, and the node falls back to a direct `cv::resize` in the subscriber callback (no GStreamer involvement at all in fallback mode). GStreamer 1.22+ (Ubuntu 24.04 / Jazzy) is required for the GPU resize kernel on Intel; that capture is in the proposal's Section 9 forward-looking items.
+On stock ROS 2 Humble (GStreamer 1.20), the `vapostproc` element is present but fails live validation due to a chroma-subsampling regression in `vaapipostproc`. Prism's GPU detection probes positive on `/dev/dri/renderD*`, but the subsequent live registry check rejects the candidate, and the node falls back to a direct `cv::resize` in the subscriber callback (no GStreamer involvement at all in fallback mode). GStreamer 1.22+ (Ubuntu 24.04 / Jazzy) is required for the GPU resize kernel on Intel; that capture is on the roadmap.
 
 The wins below are intra-process composition + DDS round-trip elimination, not GPU offload. The `chain` row is the architecturally interesting one: three DDS-piped `image_proc` / `rclpy` nodes on the stock side versus one `prism::ImageProcNode` with intra-process composition on ours. The `colorconvert` row is structural, not a kernel comparison: `image_proc` ships no C++ colorconvert node; the closest stock-side reference is a Python `rclpy` subscriber, which cannot drain a 4K BGR8 topic at 10 Hz (realised 0.76 fps, 1221 MB RSS).
 

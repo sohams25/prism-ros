@@ -194,7 +194,7 @@ void resize_camera_info(
 
 // Maps a sensor_msgs encoding string to the GStreamer format string.
 // Allow-list is intentionally narrow (bgr8, rgb8, mono8) — the egress code
-// in prism_image_proc.cpp publishes these three as sensor_msgs/Image.
+// in image_proc_node.cpp publishes these three as sensor_msgs/Image.
 std::string encoding_to_gst_format(const std::string & enc)
 {
   if (enc == "bgr8")   { return "BGR"; }

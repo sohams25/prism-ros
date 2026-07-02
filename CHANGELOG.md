@@ -14,6 +14,15 @@ for the full audit, fixes, and remaining roadmap.
 
 ### Fixed
 
+- **CameraInfo self-echo** — with default topics, the input and output
+  CameraInfo both derived to `/camera/camera_info`, so the node subscribed to
+  its own transformed publication (for `crop`, each echo re-shifted the
+  principal point). A derived collision now publishes the output CameraInfo
+  under the output image topic (`/camera/image_processed/camera_info` by
+  default); explicit `camera_info_output_topic` values are honored unchanged.
+- **`Synthetic4kPubNode` topics** — published on private `~/image_raw` /
+  `~/camera_info` while its log line and the README documented
+  `/camera/image_raw`; it now publishes the documented absolute topics.
 - **GPU-path egress `frame_id`** — the appsink handler stamped every published
   frame `frame_id="media_frame"`; it now echoes the ingest frame's `frame_id`
   (direct mode already preserved the full input header), keeping TF lookups

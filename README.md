@@ -79,7 +79,7 @@ Same resize semantics, same `sensor_msgs/Image` output, plus a scaled `CameraInf
 
 > **What "drop-in" means and where it differs.** Prism reproduces `image_proc::ResizeNode`'s *resize behavior and scaled `CameraInfo`*, but the wiring is prism's own, not byte-identical remapping:
 > - **Topics** are set via the `input_topic` / `output_topic` parameters (default `/camera/image_raw` → `/camera/image_processed`), not `image_proc`'s `image/…` → `resize/…` remap convention. Set these (or add `remappings`) to match your graph.
-> - **CameraInfo topics** are derived from the image-topic namespace (`<ns>/camera_info`). With the defaults, the *input* and *output* CameraInfo both resolve to `/camera/camera_info` — set `camera_info_output_topic` (and/or distinct namespaces) so prism does not publish onto the same topic your camera driver does.
+> - **CameraInfo topics** are derived from the image-topic namespace (`<ns>/camera_info`). When input and output would derive to the *same* topic (true with the defaults), prism publishes the output CameraInfo under the output image topic instead — `/camera/image_processed/camera_info` — so it never subscribes to its own publication. Set `camera_info_output_topic` to control the topic explicitly.
 > - **QoS** defaults to `SensorDataQoS` (BEST_EFFORT) to match camera drivers; set `reliable_qos:=true` for a RELIABLE source.
 
 ### Action chaining
@@ -165,7 +165,7 @@ Load any of the above into an `rclcpp_components::ComponentContainer` with `use_
 | `input_transport` | string | `raw` | `image_transport` name (`raw`, `compressed`, `theora`, …). `raw` keeps the UniquePtr zero-copy hot path |
 | `publish_camera_info` | bool | `true` | Publish a scaled `CameraInfo` alongside the processed image |
 | `camera_info_input_topic` | string | `""` | Optional override; empty string derives `<image_topic_namespace>/camera_info` per ROS convention |
-| `camera_info_output_topic` | string | `""` | Optional override for the published CameraInfo topic. **Set this when input and output image topics share a namespace**, or input/output CameraInfo collide on one topic |
+| `camera_info_output_topic` | string | `""` | Optional override for the published CameraInfo topic. Empty derives `<output_ns>/camera_info`; if that collides with the input CameraInfo topic, `<output_topic>/camera_info` is used instead |
 | `reliable_qos` | bool | `false` | `false` uses `SensorDataQoS` (BEST_EFFORT) for image/CameraInfo I/O — matches standard camera drivers. `true` selects RELIABLE depth-10 (e.g. for a file/replay source) |
 | `source_width`, `source_height` | int | `3840`, `2160` | Source caps. **GPU mode only** — they fix the appsrc caps and incoming frames must match. Direct mode ignores them and uses each frame's own dimensions |
 

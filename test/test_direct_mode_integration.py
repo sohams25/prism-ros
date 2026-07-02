@@ -76,14 +76,18 @@ class TestDirectMode(unittest.TestCase):
             recv['frame_id'] = msg.header.frame_id
 
         def on_info(msg):
-            if msg.width == OUT_W:  # the node's transformed (output) CameraInfo
-                recv['info'] += 1
-                recv['info_wh'] = (msg.width, msg.height)
+            recv['info'] += 1
+            recv['info_wh'] = (msg.width, msg.height)
 
         self.node.create_subscription(
             Image, '/camera/image_processed', on_img, qos_profile_sensor_data)
+        # The node derives its output CameraInfo from the output image topic
+        # when input and output would otherwise collide on one topic — assert
+        # the transformed info arrives there (and only the input travels on
+        # /camera/camera_info).
         self.node.create_subscription(
-            CameraInfo, '/camera/camera_info', on_info, qos_profile_sensor_data)
+            CameraInfo, '/camera/image_processed/camera_info', on_info,
+            qos_profile_sensor_data)
 
         frame = np.zeros((IN_H, IN_W, 3), dtype=np.uint8)
         frame[:, :, 1] = 128

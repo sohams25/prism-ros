@@ -72,10 +72,9 @@ stock's when run in isolation — those comparisons live in the
 first three rows of the table, each with the caveat that they
 bypass the DDS round-trip as well.
 
-The README summary table carries this distinction in its `Note`
-column at point of claim rather than in a footnote, and the site
-Benchmarks section repeats it in a `.finding` callout immediately
-above the chain charts.
+The README and site benchmark sections carry this distinction in
+their table captions and notes at point of claim rather than in a
+footnote.
 
 ## The colorconvert caveat
 
@@ -137,8 +136,9 @@ on a 1080p BGR8 buffer in isolation runs at 7.4 ms per frame
 therefore not the conversion arithmetic. It is the rclpy Python
 subscriber + DDS round-trip + `array.array` ↔ `np.frombuffer`
 overhead at multi-MB message sizes. Stock fps scaling proportionally
-with frame size (0.85 Hz at 4K → 3.45 Hz at 1080p, ≈4× ratio matching
-the pixel count ratio) is consistent with that diagnosis.
+with frame size (≈0.8 Hz at 4K → ≈3.5 Hz at 1080p, ≈4× ratio matching
+the pixel count ratio; the published 4K capture realised 0.76 fps) is
+consistent with that diagnosis.
 
 Two paths could produce a true kernel-cost colorconvert row:
 (a) drop the source resolution to VGA so the Python subscriber
@@ -147,8 +147,8 @@ what the chain row already shows; (b) write a C++ stock-side
 colorconvert component, side-stepping the Python path entirely.
 Neither was pursued for v0.1.0. The colorconvert row in the published
 results table is presented as a Python-subscriber-throughput-ceiling
-finding, not as a kernel comparison, and the headline `−99.4 %` Δ%
-is not used.
+finding, not as a kernel comparison, and no headline Δ% is quoted
+for it.
 
 ## Sources of noise, mitigations
 
@@ -206,10 +206,10 @@ python3 src/prism-ros/bench/analyze.py \
   --results-dir src/prism-ros/bench/results/ \
   --output src/prism-ros/bench/results/summary.json
 
-# 4. (Optional) Regenerate the site charts.
+# 4. (Optional) Render plots — local artifacts; the site embeds none.
 python3 src/prism-ros/bench/plot.py \
   --summary src/prism-ros/bench/results/summary.json \
-  --output-dir src/prism-ros/docs/assets/bench/
+  --output-dir src/prism-ros/bench/results/plots/
 ```
 
 Each `run.py` invocation writes five files under `--output-dir`:
