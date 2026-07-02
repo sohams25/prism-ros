@@ -23,8 +23,11 @@ Synthetic4kPubNode::Synthetic4kPubNode(const rclcpp::NodeOptions & options)
        rclcpp::NodeOptions(options).use_intra_process_comms(true)),
   cx_(WIDTH / 2), cy_(HEIGHT / 2), dx_(15), dy_(10)
 {
-  image_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image_raw", 10);
-  info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 10);
+  // Absolute topics matching the demo docs: the README points prism's default
+  // input (/camera/image_raw) at this node as a drop-in source. Private (~/)
+  // topics would silently feed nothing. Remap per instance if needed.
+  image_pub_ = create_publisher<sensor_msgs::msg::Image>("/camera/image_raw", 10);
+  info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("/camera/camera_info", 10);
 
   init_background();
   init_camera_info();

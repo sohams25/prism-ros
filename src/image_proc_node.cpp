@@ -212,8 +212,30 @@ void ImageProcNode::setup_camera_info_io(
 
   std::string input_info_topic  = get_parameter("camera_info_input_topic").as_string();
   std::string output_info_topic = get_parameter("camera_info_output_topic").as_string();
+  const bool output_derived = output_info_topic.empty();
   if (input_info_topic.empty())  { input_info_topic  = derive_camera_info_topic(image_input_topic); }
   if (output_info_topic.empty()) { output_info_topic = derive_camera_info_topic(image_output_topic); }
+
+  // With the default topics, input and output would both derive to the same
+  // <ns>/camera_info — the node would then subscribe to its own publication
+  // and re-apply the transform chain to already-transformed intrinsics (for
+  // crop, that walks the principal point by crop_x/crop_y on every echo).
+  // When the collision comes from derivation, publish under the output image
+  // topic instead; an explicit camera_info_output_topic always wins.
+  if (output_info_topic == input_info_topic) {
+    if (output_derived) {
+      output_info_topic = image_output_topic + "/camera_info";
+      RCLCPP_INFO(get_logger(),
+        "Input and output CameraInfo both derived to '%s'; publishing output "
+        "CameraInfo on '%s' instead (set camera_info_output_topic to override).",
+        input_info_topic.c_str(), output_info_topic.c_str());
+    } else {
+      RCLCPP_WARN(get_logger(),
+        "camera_info_output_topic equals the input CameraInfo topic ('%s') — "
+        "the node will receive its own transformed CameraInfo.",
+        output_info_topic.c_str());
+    }
+  }
 
   info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
     input_info_topic, image_qos(),
@@ -321,8 +343,14 @@ rcl_interfaces::msg::SetParametersResult ImageProcNode::on_set_parameters(
       else if (n == "height")          { abs_h = static_cast<int>(p.as_int()); }
     }
     if (use_scale) {
-      trial.target_width  = static_cast<int>(trial.source_width  * scale_w);
-      trial.target_height = static_cast<int>(trial.source_height * scale_h);
+      // Mirror load_config_from_params exactly (clamp before narrowing), so
+      // the dry-run validates the same dimensions the rebuild will use.
+      constexpr double kMinDim = 1.0;
+      constexpr double kMaxDim = 16384.0;
+      trial.target_width  = static_cast<int>(
+        std::clamp(trial.source_width * scale_w, kMinDim, kMaxDim));
+      trial.target_height = static_cast<int>(
+        std::clamp(trial.source_height * scale_h, kMinDim, kMaxDim));
     } else {
       trial.target_width  = abs_w;
       trial.target_height = abs_h;
@@ -639,7 +667,10 @@ void ImageProcNode::on_image(sensor_msgs::msg::Image::UniquePtr msg)
 
   // Extract the ROS timestamp and frame_id BEFORE releasing ownership. The
   // timestamp tunnels through GStreamer as the buffer PTS; the frame_id is
-  // stashed for the egress side (buffers carry no string metadata).
+  // stashed for the egress side (buffers carry no string metadata). Unlike the
+  // per-buffer PTS, this is a last-writer field: with frames queued in the
+  // pipeline it can be a few frames newer than the pixels it is paired with —
+  // correct for the normal case of a constant per-stream frame_id.
   GstClockTime pts =
     static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL +
     msg->header.stamp.nanosec;
